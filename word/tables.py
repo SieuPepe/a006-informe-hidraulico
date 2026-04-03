@@ -213,12 +213,13 @@ def _fill_fuentes(doc, datos_sectores):
         return
     _clear_data_rows(table)
     for f in fuentes:
+        # Cols: Nombre | Tipo | Caudal concesional (m3/año) | Punto entrega | Cota toma
         _add_row(table, [
             _safe_get(f, "nombre", _safe_get(f, "code")),
-            _safe_get(f, "tipo", "Captación"),
-            _safe_get(f, "caudal_concesional"),
-            _safe_get(f, "caudal_medio"),
-            _safe_get(f, "punto_entrega", f.get("_sector", "")),
+            "Captación",
+            "",  # Caudal concesional - no disponible en BD
+            f.get("_sector", ""),  # Punto de entrega al sistema
+            _safe_get(f, "cota_toma"),
         ])
 
 
@@ -242,13 +243,16 @@ def _fill_depositos(doc, datos_sectores):
         return
     _clear_data_rows(table)
     for d in depositos:
+        # Cols: Nombre | Cota solera | Cota rebose | Cota mínima | Cota máxima | Volumen | Nº entradas | Nº salidas | Sector
         _add_row(table, [
             _safe_get(d, "nombre", _safe_get(d, "code")),
             _safe_get(d, "cota_solera"),
             _safe_get(d, "cota_rebose"),
+            "",  # Cota mínima operativa
+            "",  # Cota máxima operativa
             _safe_get(d, "volumen_m3"),
-            _safe_get(d, "funcion", "Regulación"),
-            _safe_get(d, "alimentacion"),
+            "",  # Nº de entradas
+            "",  # Nº de salidas
             d.get("_sector", ""),
         ])
 
@@ -262,8 +266,11 @@ def _fill_red_materiales(doc, datos_muni, nivel):
         return
     _clear_data_rows(table)
     key = f"materiales_{nivel}"
+    nivel_nombre = "Primaria" if nivel == "primaria" else "Secundaria"
     for m in datos_muni.get(key, []):
+        # Cols: Nivel funcional | Material | Rango diámetros | Longitud | % total
         _add_row(table, [
+            nivel_nombre,
             _safe_get(m, "material"),
             _safe_get(m, "rango_diametros_mm"),
             _safe_get(m, "longitud_m"),
@@ -288,9 +295,9 @@ def _fill_bombeos(doc, datos_sectores):
             b_copy = dict(b)
             b_copy["_sector"] = sector.get("nombre_sector", "")
             bombas.append(b_copy)
+    _clear_data_rows(table)
     if not bombas:
         return
-    _clear_data_rows(table)
     for b in bombas:
         _add_row(table, [
             _safe_get(b, "nombre", _safe_get(b, "code")),
@@ -321,9 +328,9 @@ def _fill_grupos_presion(doc, datos_muni, datos_sectores):
                 g_copy = dict(g)
                 g_copy["_sector"] = sector.get("nombre_sector", "")
                 grupos.append(g_copy)
+    _clear_data_rows(table)
     if not grupos:
         return
-    _clear_data_rows(table)
     for g in grupos:
         _add_row(table, [
             _safe_get(g, "nombre", _safe_get(g, "code")),
@@ -520,40 +527,41 @@ def _fill_resultados_globales(doc, resultados):
     punta = globales.get("punta", {})
     nocturno = globales.get("nocturno", {})
 
+    # Cols: Indicador | Unidad | Demanda media | Demanda máxima | Demanda mínima nocturna
     indicadores = [
-        ("Caudal total inyectado (l/s)",
+        ("Caudal total inyectado", "l/s",
          _safe_get(media, "caudal_total_ls"),
          _safe_get(punta, "caudal_total_ls"),
          _safe_get(nocturno, "caudal_total_ls")),
-        ("Presión media en la red (m.c.a.)",
+        ("Presión media en la red", "m.c.a.",
          _safe_get(media, "presion_media"),
          _safe_get(punta, "presion_media"),
          _safe_get(nocturno, "presion_media")),
-        ("Presión mínima en la red (m.c.a.)",
+        ("Presión mínima en la red", "m.c.a.",
          _safe_get(media, "presion_minima"),
          _safe_get(punta, "presion_minima"),
          _safe_get(nocturno, "presion_minima")),
-        ("Presión máxima en la red (m.c.a.)",
+        ("Presión máxima en la red", "m.c.a.",
          _safe_get(media, "presion_maxima"),
          _safe_get(punta, "presion_maxima"),
          _safe_get(nocturno, "presion_maxima")),
-        ("Velocidad media en la red (m/s)",
+        ("Velocidad media en la red", "m/s",
          _safe_get(media, "velocidad_media"),
          _safe_get(punta, "velocidad_media"),
          _safe_get(nocturno, "velocidad_media")),
-        ("Velocidad máxima en la red (m/s)",
+        ("Velocidad máxima en la red", "m/s",
          _safe_get(media, "velocidad_maxima"),
          _safe_get(punta, "velocidad_maxima"),
          _safe_get(nocturno, "velocidad_maxima")),
-        ("% tramos con velocidad < 0,05 m/s",
+        ("% tramos con velocidad < 0,05 m/s", "%",
          _safe_get(media, "pct_baja_vel"),
          _safe_get(punta, "pct_baja_vel"),
          _safe_get(nocturno, "pct_baja_vel")),
-        ("% tramos con presión < 10 m.c.a.",
+        ("% nodos con presión < 10 m.c.a.", "%",
          _safe_get(media, "pct_baja_presion"),
          _safe_get(punta, "pct_baja_presion"),
          _safe_get(nocturno, "pct_baja_presion")),
-        ("% tramos con presión > 60 m.c.a.",
+        ("% nodos con presión > 60 m.c.a.", "%",
          _safe_get(media, "pct_alta_presion"),
          _safe_get(punta, "pct_alta_presion"),
          _safe_get(nocturno, "pct_alta_presion")),
@@ -594,15 +602,15 @@ def _fill_depositos_eps(doc, resultados):
     _clear_data_rows(table)
 
     for d in resultados.get("depositos_eps", []):
-        nivel_min = float(_safe_get(d, "nivel_minimo", 0))
+        nivel_min = float(_safe_get(d, "nivel_minimo", 0) or 0)
         alcanza_min = "Sí" if nivel_min <= 0.5 else "No"
+        # Cols: Depósito | Nivel inicial | Nivel mín alcanzado | Nivel máx alcanzado | Nº ciclos | ¿Alcanza mín operativo?
         _add_row(table, [
             _safe_get(d, "deposito"),
-            _safe_get(d, "sector"),
+            _safe_get(d, "nivel_medio"),  # Nivel inicial ≈ nivel medio como aproximación
             _safe_get(d, "nivel_minimo"),
             _safe_get(d, "nivel_maximo"),
-            _safe_get(d, "nivel_medio"),
-            _safe_get(d, "volumen_util_m3"),
+            "",  # Nº ciclos llenado/vaciado - no calculado
             alcanza_min,
         ])
 
