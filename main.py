@@ -185,8 +185,19 @@ def main():
     print("  [3/5] Replicando bloques de sector...")
     replicar_sectores(doc, datos_sectores, resultados)
 
-    print("  [4/5] Generando textos con Claude API...")
-    rellenar_marcadores(doc, params, datos_muni, datos_sectores, resultados)
+    # Generación de textos AI (opcional)
+    generar_ai = input("\n  ¿Generar textos narrativos con Claude API? (s/n): ").strip().lower()
+    if generar_ai == "s":
+        print("  [4/5] Generando textos con Claude API...")
+        rellenar_marcadores(doc, params, datos_muni, datos_sectores, resultados)
+    else:
+        print("  [4/5] Textos AI omitidos — los marcadores quedarán vacíos.")
+        # Solo insertar descripcion_sectores del usuario
+        from word.bookmarks import _find_bookmarks, _insert_text_at_bookmark
+        bookmarks = _find_bookmarks(doc)
+        desc = params.get("descripcion_sectores", "")
+        if desc and "descripcion_sectores" in bookmarks:
+            _insert_text_at_bookmark(bookmarks["descripcion_sectores"], desc)
 
     print("  [5/5] Guardando documento...")
     nombre_salida = (
