@@ -81,104 +81,60 @@ def _safe_get(d, key: str, default: Any = "") -> Any:
 # Clasificación por umbrales
 # ─────────────────────────────────────────────────────────────
 
-_CLASIF_ORDER = {"Óptimo": 0, "Aceptable": 1, "Deficiente": 2, "Crítico": 3, "Sin datos": 4}
+_CLASIF_ORDER = {"Óptimo": 0, "Aceptable": 1, "Deficiente": 2, "Insuficiente": 2, "Crítico": 3, "Sin datos": 4}
 
 
-def _peor(a: str, b: str) -> str:
-    """Devuelve la peor de dos clasificaciones."""
-    return a if _CLASIF_ORDER.get(a, 4) >= _CLASIF_ORDER.get(b, 4) else b
+def _peor(*clasificaciones):
+    """Devuelve la peor clasificación de las proporcionadas."""
+    result = "Óptimo"
+    for c in clasificaciones:
+        if _CLASIF_ORDER.get(c, 4) > _CLASIF_ORDER.get(result, 4):
+            result = c
+    return result
 
 
-def _clasificar_presion(p_min_punta, p_max_nocturno) -> str:
-    """Clasifica el estado de presión de un sector.
-
-    Umbrales (m.c.a.):
-        Óptimo:      20 <= p_min  y  p_max <= 40
-        Aceptable:   10 <= p_min < 20  o  40 < p_max <= 50
-        Deficiente:   5 <= p_min < 10  o  50 < p_max <= 60
-        Crítico:      p_min < 5  o  p_max > 60
-    """
-    try:
-        p_min = float(p_min_punta) if p_min_punta not in (None, "", "—") else None
-        p_max = float(p_max_nocturno) if p_max_nocturno not in (None, "", "—") else None
-    except (TypeError, ValueError):
-        return "Sin datos"
-
-    if p_min is None and p_max is None:
-        return "Sin datos"
-
-    clasif = "Óptimo"
-    if p_min is not None:
-        if p_min < 5:
-            clasif = _peor(clasif, "Crítico")
-        elif p_min < 10:
-            clasif = _peor(clasif, "Deficiente")
-        elif p_min < 20:
-            clasif = _peor(clasif, "Aceptable")
-
-    if p_max is not None:
-        if p_max > 60:
-            clasif = _peor(clasif, "Crítico")
-        elif p_max > 50:
-            clasif = _peor(clasif, "Deficiente")
-        elif p_max > 40:
-            clasif = _peor(clasif, "Aceptable")
-
-    return clasif
-
-
-def _clasificar_velocidad(vel_media, vel_max=None) -> str:
-    """Clasifica el estado de velocidad de un sector.
-
-    Umbrales (m/s):
-        Óptimo:      0,30 <= v_media <= 1,00
-        Aceptable:   0,05 <= v_media < 0,30
-        Deficiente:  v_media < 0,05
-        Crítico:     v_max > 1,50
-    """
-    try:
-        v = float(vel_media) if vel_media not in (None, "", "—") else None
-        vx = float(vel_max) if vel_max not in (None, "", "—") else None
-    except (TypeError, ValueError):
-        return "Sin datos"
-
-    if v is None:
-        return "Sin datos"
-
-    if vx is not None and vx > 1.5:
-        return "Crítico"
-    if v < 0.05:
-        return "Deficiente"
-    if v < 0.30:
-        return "Aceptable"
-    if v <= 1.00:
+def _clasificar_tpi(tpi):
+    """Clasifica un sector según su valor TPI (0-1)."""
+    if tpi is None or tpi == "":
+        return ""
+    tpi = float(tpi)
+    if tpi >= 0.90:
         return "Óptimo"
-    return "Deficiente"
-
-
-def _clasificar_retencion(t_ret_h) -> str:
-    """Clasifica el tiempo de retención.
-
-    Umbrales (horas):
-        Óptimo:     t <= 24
-        Aceptable:  24 < t <= 72
-        Deficiente: 72 < t <= 144
-        Crítico:    t > 144
-    """
-    try:
-        t = float(t_ret_h) if t_ret_h not in (None, "", "—") else None
-    except (TypeError, ValueError):
-        return "Sin datos"
-
-    if t is None:
-        return "Sin datos"
-    if t <= 24:
-        return "Óptimo"
-    if t <= 72:
+    if tpi >= 0.70:
         return "Aceptable"
-    if t <= 144:
+    if tpi >= 0.50:
         return "Deficiente"
     return "Crítico"
+
+
+def _clasificar_retencion(h):
+    """Clasifica el tiempo de retención en red."""
+    if h is None or h == "":
+        return ""
+    h = float(h)
+    if h < 24:
+        return "Óptimo"
+    if h < 72:
+        return "Aceptable"
+    if h < 144:
+        return "Deficiente"
+    return "Crítico"
+
+
+def _clasificar_autonomia(h):
+    """Clasifica la autonomía de un depósito."""
+    if h is None or h == "":
+        return ""
+    h = float(h)
+    if h >= 48:
+        return "Óptimo"
+    if h >= 24:
+        return "Aceptable"
+    if h >= 12:
+        return "Insuficiente"
+    return "Crítico"
+
+
 
 
 def _clasificar_global(*clasificaciones: str) -> str:
@@ -625,18 +581,15 @@ def _fill_depositos_eps(doc, resultados):
 def _fill_indicadores_presion(doc, resultados, datos_sectores):
     """TABLA_INDICADORES_PRESION — Indicadores de presión por sector (Cap 6.2).
 
-    Columnas: Sector | Presión mínima escenario punta (m.c.a.) |
-              Presión media escenario medio (m.c.a.) |
-              Presión máxima escenario nocturno (m.c.a.) |
-              % nodos < 10 m.c.a. | % nodos > 60 m.c.a. | Clasificación
+    Cols: Sector | P.min punta | P.media media | P.max nocturno |
+          % nodos <10 | % nodos >60 | TPI presión | Clasificación
     """
     table = _find_table_by_marker(doc, "{{TABLA_INDICADORES_PRESION}}")
     if not table:
         logger.warning("Tabla TABLA_INDICADORES_PRESION no encontrada.")
         return
     por_sector = resultados.get("por_sector", {})
-    if not por_sector:
-        return
+    tpi = resultados.get("tpi", {})
     _clear_data_rows(table)
 
     for s in datos_sectores:
@@ -644,12 +597,9 @@ def _fill_indicadores_presion(doc, resultados, datos_sectores):
         punta = por_sector.get(sid, {}).get("punta", {})
         media = por_sector.get(sid, {}).get("media", {})
         nocturno = por_sector.get(sid, {}).get("nocturno", {})
+        tpi_val = _safe_get(tpi.get(sid, {}), "tpi_presion")
+        clasif = _clasificar_tpi(tpi_val)
 
-        p_min_punta = _safe_get(punta, "presion_minima")
-        p_media_media = _safe_get(media, "presion_media")
-        p_max_nocturno = _safe_get(nocturno, "presion_maxima")
-
-        # Use pct fields if available, otherwise compute from node counts
         pct_baja = _safe_get(punta, "pct_baja_presion")
         pct_alta = _safe_get(nocturno, "pct_alta_presion")
         if not pct_baja and punta:
@@ -661,15 +611,14 @@ def _fill_indicadores_presion(doc, resultados, datos_sectores):
             n_alta = int(_safe_get(nocturno, "nodos_alta_presion", 0) or 0)
             pct_alta = round(100 * n_alta / total, 1) if total > 0 else 0
 
-        clasif = _clasificar_presion(p_min_punta, p_max_nocturno)
-
         _add_row(table, [
             _safe_get(s, "nombre_sector"),
-            p_min_punta,
-            p_media_media,
-            p_max_nocturno,
+            _safe_get(punta, "presion_minima"),
+            _safe_get(media, "presion_media"),
+            _safe_get(nocturno, "presion_maxima"),
             pct_baja,
             pct_alta,
+            tpi_val,
             clasif,
         ])
 
@@ -677,41 +626,41 @@ def _fill_indicadores_presion(doc, resultados, datos_sectores):
 def _fill_indicadores_velocidad(doc, resultados, datos_sectores):
     """TABLA_INDICADORES_VELOCIDAD — Indicadores de velocidad por sector (Cap 6.3).
 
-    Columnas: Sector | Velocidad media (m/s) | Velocidad máxima (m/s) |
-              % tramos v < 0,05 m/s | % tramos v > 1,50 m/s |
-              Pérdida unitaria media (m/km) | Clasificación
+    Cols: Sector | V.media | V.máx | % v<0,05 | % v>1,5 |
+          Pérd. unit. media | TPI velocidad | Clasificación
     """
     table = _find_table_by_marker(doc, "{{TABLA_INDICADORES_VELOCIDAD}}")
     if not table:
         logger.warning("Tabla TABLA_INDICADORES_VELOCIDAD no encontrada.")
         return
     por_sector = resultados.get("por_sector", {})
-    if not por_sector:
-        return
+    tpi = resultados.get("tpi", {})
     _clear_data_rows(table)
 
     for s in datos_sectores:
         sid = s["sector_id"]
         media = por_sector.get(sid, {}).get("media", {})
-        if not media:
-            continue
-        vel_media = _safe_get(media, "velocidad_media")
-        vel_max = _safe_get(media, "velocidad_maxima")
-        clasif = _clasificar_velocidad(vel_media, vel_max)
+        tpi_val = _safe_get(tpi.get(sid, {}), "tpi_velocidad")
+        clasif = _clasificar_tpi(tpi_val)
 
         _add_row(table, [
             _safe_get(s, "nombre_sector"),
-            vel_media,
-            vel_max,
+            _safe_get(media, "velocidad_media"),
+            _safe_get(media, "velocidad_maxima"),
             _safe_get(media, "pct_baja_vel"),
             _safe_get(media, "pct_alta_vel"),
             _safe_get(media, "perdida_unitaria_media"),
+            tpi_val,
             clasif,
         ])
 
 
 def _fill_retencion(doc, resultados, datos_sectores):
-    """TABLA_RETENCION — Tiempo de retención por sector."""
+    """TABLA_RETENCION — Tiempo de retención en red por sector (simplificada).
+
+    Cols: Sector | Volumen red (m³) | Caudal medio (l/s) |
+          Tiempo retención (h) | Clasificación
+    """
     table = _find_table_by_marker(doc, "{{TABLA_RETENCION}}")
     if not table:
         logger.warning("Tabla TABLA_RETENCION no encontrada.")
@@ -719,43 +668,44 @@ def _fill_retencion(doc, resultados, datos_sectores):
     _clear_data_rows(table)
 
     retencion = resultados.get("indicadores_retencion", [])
-    depositos = resultados.get("depositos_eps", [])
-
-    # Indexar retención por sector_id
     ret_by_sector = {r.get("sector_id"): r for r in retencion}
-    # Indexar depósitos por sector
-    dep_by_sector = {}
-    for d in depositos:
-        sec = d.get("sector", "")
-        if sec not in dep_by_sector:
-            dep_by_sector[sec] = []
-        dep_by_sector[sec].append(d)
 
     for s in datos_sectores:
         sid = s["sector_id"]
-        nombre = _safe_get(s, "nombre_sector")
         r = ret_by_sector.get(sid, {})
-
-        # Datos de depósito del sector
-        vol_dep = 0
-        caudal_dep = 0
-        deps_sector = dep_by_sector.get(nombre, [])
-        for dp in deps_sector:
-            vol_dep += float(_safe_get(dp, "volumen_util_m3", 0))
-        caudal_dep = float(_safe_get(r, "caudal_medio_ls", 0))
-        t_ret_dep = round(vol_dep / (caudal_dep / 1000) / 3600, 1) if caudal_dep > 0 else 0
-
-        t_ret_red = _safe_get(r, "tiempo_retencion_red_h", 0)
-        clasif = _clasificar_retencion(t_ret_red)
+        t_ret = _safe_get(r, "tiempo_retencion_red_h", 0)
+        clasif = _clasificar_retencion(t_ret)
 
         _add_row(table, [
-            nombre,
+            _safe_get(s, "nombre_sector"),
             _safe_get(r, "volumen_red_m3"),
             _safe_get(r, "caudal_medio_ls"),
-            t_ret_red,
-            round(vol_dep, 0) if vol_dep else "",
-            round(caudal_dep, 3) if caudal_dep else "",
-            round(t_ret_dep, 1) if t_ret_dep else "",
+            t_ret,
+            clasif,
+        ])
+
+
+def _fill_autonomia(doc, resultados):
+    """TABLA_AUTONOMIA — Autonomía de depósitos individuales (Cap 6.5).
+
+    Cols: Sector | Depósito | Volumen útil medio (m³) |
+          Caudal salida medio (l/s) | Autonomía (h) | Clasificación
+    """
+    table = _find_table_by_marker(doc, "{{TABLA_AUTONOMIA}}")
+    if not table:
+        logger.warning("Tabla TABLA_AUTONOMIA no encontrada.")
+        return
+    _clear_data_rows(table)
+
+    autonomia = resultados.get("autonomia", [])
+    for d in autonomia:
+        clasif = _clasificar_autonomia(_safe_get(d, "autonomia_h"))
+        _add_row(table, [
+            _safe_get(d, "sector"),
+            _safe_get(d, "deposito"),
+            _safe_get(d, "volumen_util_m3"),
+            _safe_get(d, "caudal_salida_ls"),
+            _safe_get(d, "autonomia_h"),
             clasif,
         ])
 
@@ -763,65 +713,49 @@ def _fill_retencion(doc, resultados, datos_sectores):
 def _fill_clasificacion(doc, resultados, datos_sectores):
     """TABLA_CLASIFICACION — Clasificación global por sector (Cap 6.5).
 
-    Columnas: Sector | Clasificación presión | Clasificación velocidad |
-              Clasificación retención | Clasificación global
+    Cols: Sector | Clasif. presión | Clasif. velocidad |
+          Clasif. retención | Clasif. autonomía | Clasificación global
     """
     table = _find_table_by_marker(doc, "{{TABLA_CLASIFICACION}}")
     if not table:
         logger.warning("Tabla TABLA_CLASIFICACION no encontrada.")
         return
-    por_sector = resultados.get("por_sector", {})
-    if not por_sector and not datos_sectores:
-        return
     _clear_data_rows(table)
 
+    tpi = resultados.get("tpi", {})
     retencion = resultados.get("indicadores_retencion", [])
-    depositos_eps = resultados.get("depositos_eps", [])
+    autonomia = resultados.get("autonomia", [])
     ret_by_sector = {r.get("sector_id"): r for r in retencion}
 
-    # Build deposit volume lookup by sector name
-    dep_by_sector: dict[str, float] = {}
-    for d in depositos_eps:
-        sec = d.get("sector", "")
-        dep_by_sector[sec] = dep_by_sector.get(sec, 0) + float(
-            _safe_get(d, "volumen_util_m3", 0) or 0)
+    # Peor autonomía por sector
+    aut_by_sector = {}
+    for d in autonomia:
+        sid = d.get("sector_id")
+        a_h = d.get("autonomia_h")
+        if sid not in aut_by_sector or (a_h is not None and (
+                aut_by_sector[sid] is None or float(a_h) < float(aut_by_sector[sid]))):
+            aut_by_sector[sid] = a_h
 
     for s in datos_sectores:
         sid = s["sector_id"]
-        punta = por_sector.get(sid, {}).get("punta", {})
-        media = por_sector.get(sid, {}).get("media", {})
-        nocturno = por_sector.get(sid, {}).get("nocturno", {})
-        r = ret_by_sector.get(sid, {})
-
-        c_presion = _clasificar_presion(
-            _safe_get(punta, "presion_minima"),
-            _safe_get(nocturno, "presion_maxima"),
-        )
-        c_velocidad = _clasificar_velocidad(
-            _safe_get(media, "velocidad_media"),
-            _safe_get(media, "velocidad_maxima"),
-        )
-
-        # Use worst retention time (network vs deposit)
-        t_red = _safe_get(r, "tiempo_retencion_red_h")
         nombre = _safe_get(s, "nombre_sector")
-        vol_dep = dep_by_sector.get(nombre, 0)
-        caudal = float(_safe_get(r, "caudal_medio_ls", 0) or 0)
-        t_dep = (vol_dep / (caudal / 1000.0) / 3600.0) if caudal > 0 and vol_dep > 0 else None
-        tiempos = [t for t in (
-            float(t_red) if t_red not in (None, "", "—") else None,
-            t_dep,
-        ) if t is not None]
-        peor_t = max(tiempos) if tiempos else None
-        c_retencion = _clasificar_retencion(peor_t)
 
-        c_global = _clasificar_global(c_presion, c_velocidad, c_retencion)
+        c_presion = _clasificar_tpi(_safe_get(tpi.get(sid, {}), "tpi_presion"))
+        c_velocidad = _clasificar_tpi(_safe_get(tpi.get(sid, {}), "tpi_velocidad"))
+
+        r = ret_by_sector.get(sid, {})
+        c_retencion = _clasificar_retencion(_safe_get(r, "tiempo_retencion_red_h"))
+
+        c_autonomia = _clasificar_autonomia(aut_by_sector.get(sid))
+
+        c_global = _peor(c_presion, c_velocidad, c_retencion, c_autonomia)
 
         _add_row(table, [
             nombre,
             c_presion,
             c_velocidad,
             c_retencion,
+            c_autonomia,
             c_global,
         ])
 
@@ -878,6 +812,7 @@ def rellenar_tablas(doc, datos_muni, datos_sectores, resultados):
     _fill_indicadores_presion(doc, resultados, datos_sectores)  # Cap 6.2
     _fill_indicadores_velocidad(doc, resultados, datos_sectores)  # Cap 6.3
     _fill_retencion(doc, resultados, datos_sectores)            # Cap 6.4
+    _fill_autonomia(doc, resultados)                            # Cap 6.5
     _fill_clasificacion(doc, resultados, datos_sectores)        # Cap 6.5
 
 
