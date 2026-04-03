@@ -1,0 +1,20 @@
+# Credenciales - NUNCA subir al repositorio
+config.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+
+# PyCharm
+.idea/
+
+# Outputs generados
+output/
+*.docx
+
+# Logs
+*.log
