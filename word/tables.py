@@ -811,25 +811,6 @@ def _fill_clasificacion(doc, resultados, datos_sectores):
         ])
 
 
-def _fill_caudalimetros(doc, datos_muni):
-    """TABLA_CAUDALIMETROS — Caudalímetros (Anexo 1).
-
-    Columnas variables según los datos disponibles.
-    """
-    table = _find_table_by_marker(doc, "{{TABLA_CAUDALIMETROS}}")
-    if not table:
-        logger.warning("Tabla TABLA_CAUDALIMETROS no encontrada.")
-        return
-    caudalimetros = datos_muni.get("caudalimetros", [])
-    if not caudalimetros:
-        return
-    _clear_data_rows(table)
-    for c in caudalimetros:
-        if isinstance(c, dict):
-            _add_row(table, list(c.values()))
-        elif isinstance(c, (list, tuple)):
-            _add_row(table, list(c))
-
 
 # ─────────────────────────────────────────────────────────────
 # Función principal
@@ -889,7 +870,5 @@ def rellenar_tablas(doc, datos_muni, datos_sectores, resultados):
     _fill_retencion(doc, resultados, datos_sectores)            # Cap 6.4
     _fill_clasificacion(doc, resultados, datos_sectores)        # Cap 6.5
 
-    # Anexo 1 — Caudalímetros
-    _fill_caudalimetros(doc, datos_muni)                        # Anexo 1
 
     logger.info("Tablas rellenadas correctamente.")
