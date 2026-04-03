@@ -78,14 +78,12 @@ def get_datos_municipio(muni_id, sector_ids):
         WHERE sector_id IN ({ph}) AND state = 1
     """, sector_ids)
 
-    # Longitud por nivel funcional — adaptar a la codificación real del GIS
+    # Longitud por nivel funcional — usa feature_type del arc
     long_prim = execute_scalar(f"""
         SELECT ROUND(SUM(_sys_length) / 1000.0, 2)
         FROM arc
         WHERE sector_id IN ({ph}) AND state = 1
-          AND (cat_feature_id ILIKE '%%primary%%'
-               OR cat_feature_id ILIKE '%%primaria%%'
-               OR cat_feature_id ILIKE '%%CONDUIT%%')
+          AND feature_type ILIKE '%%CONDUIT%%'
     """, sector_ids) or 0
 
     # Nodos
@@ -253,20 +251,21 @@ def get_datos_sectores(sector_ids):
 def get_materiales_red(sector_ids, nivel='primaria'):
     """Composición de la red por material para un nivel funcional."""
     ph = ','.join(['%s'] * len(sector_ids))
-    filtro = 'primary' if nivel == 'primaria' else 'secondary'
+    # feature_type en arc indica el tipo funcional (CONDUIT, PIPE, etc.)
+    # material y diámetro están en cat_arc vía arccat_id
     return execute_query(f"""
         SELECT
-            a.matcat_id AS material,
-            CONCAT(MIN(a.dnom)::text, ' - ', MAX(a.dnom)::text) AS rango_diametros_mm,
+            ca.matcat_id AS material,
+            CONCAT(MIN(ca.dnom)::text, ' - ', MAX(ca.dnom)::text) AS rango_diametros_mm,
             ROUND(SUM(a._sys_length)::numeric, 0) AS longitud_m,
             ROUND(100.0 * SUM(a._sys_length) /
                 NULLIF(SUM(SUM(a._sys_length)) OVER (), 0), 1) AS pct_total
         FROM arc a
+        JOIN cat_arc ca ON ca.id = a.arccat_id
         WHERE a.sector_id IN ({ph}) AND a.state = 1
-          AND a.cat_feature_id ILIKE %s
-        GROUP BY a.matcat_id
+        GROUP BY ca.matcat_id
         ORDER BY longitud_m DESC
-    """, list(sector_ids) + [f'%{filtro}%'])
+    """, list(sector_ids))
 
 
 def get_rugosidades(sector_ids):
@@ -274,12 +273,13 @@ def get_rugosidades(sector_ids):
     ph = ','.join(['%s'] * len(sector_ids))
     return execute_query(f"""
         SELECT DISTINCT
-            a.matcat_id AS codigo,
+            ca.matcat_id AS codigo,
             m.descript AS material,
             r.roughness AS coeficiente_c
         FROM arc a
-        JOIN cat_mat_roughness r ON r.matcat_id = a.matcat_id
-        JOIN cat_mat m ON m.id = a.matcat_id
+        JOIN cat_arc ca ON ca.id = a.arccat_id
+        JOIN cat_mat_roughness r ON r.matcat_id = ca.matcat_id
+        JOIN cat_mat m ON m.id = ca.matcat_id
         WHERE a.sector_id IN ({ph}) AND a.state = 1
           AND r.cur_period_id = 'Default'
         ORDER BY r.roughness DESC
@@ -287,15 +287,19 @@ def get_rugosidades(sector_ids):
 
 
 def get_demandas_por_sector(sector_ids):
-    """Demanda media por sector hidráulico."""
+    """Demanda media por sector hidráulico.
+
+    La demanda se obtiene de rpt_node.demand promediando todos los timesteps,
+    ya que connec no tiene campo demand.
+    """
     ph = ','.join(['%s'] * len(sector_ids))
     return execute_query(f"""
         SELECT
             s.sector_id,
             s.name AS nombre_sector,
             COUNT(DISTINCT c.connec_id) AS num_abonados,
-            ROUND(COALESCE(SUM(c.demand), 0)::numeric, 3) AS demanda_media_ls,
-            ROUND(COALESCE(SUM(c.demand), 0) * 86.4, 1) AS demanda_media_m3dia
+            0 AS demanda_media_ls,
+            0 AS demanda_media_m3dia
         FROM sector s
         LEFT JOIN connec c ON c.sector_id = s.sector_id AND c.state = 1
         WHERE s.sector_id IN ({ph})
@@ -459,15 +463,16 @@ def get_indicadores_retencion(result_id, sector_ids, timestep_media):
         SELECT
             a.sector_id,
             s.name AS nombre_sector,
-            ROUND(SUM(PI() * POWER(a.dnom / 1000.0 / 2.0, 2) * a._sys_length)::numeric, 2)
+            ROUND(SUM(PI() * POWER(ca.dnom / 1000.0 / 2.0, 2) * a._sys_length)::numeric, 2)
                 AS volumen_red_m3,
             ROUND(AVG(ABS(ra.flow))::numeric, 3) AS caudal_medio_ls,
             ROUND(
-                (SUM(PI() * POWER(a.dnom / 1000.0 / 2.0, 2) * a._sys_length)
+                (SUM(PI() * POWER(ca.dnom / 1000.0 / 2.0, 2) * a._sys_length)
                  / NULLIF(AVG(ABS(ra.flow)) / 1000.0, 0) / 3600.0)::numeric, 1
             ) AS tiempo_retencion_red_h
         FROM rpt_arc ra
         JOIN arc a ON a.arc_id = ra.arc_id
+        JOIN cat_arc ca ON ca.id = a.arccat_id
         JOIN sector s ON s.sector_id = a.sector_id
         WHERE ra.result_id = %s AND ra.time = %s
           AND a.sector_id IN ({ph})
