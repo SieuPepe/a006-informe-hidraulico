@@ -276,12 +276,11 @@ def get_rugosidades(sector_ids):
     return execute_query(f"""
         SELECT DISTINCT
             ca.matcat_id AS codigo,
-            m.descript AS material,
+            ca.matcat_id AS material,
             r.roughness AS coeficiente_c
         FROM arc a
         JOIN cat_arc ca ON ca.id = a.arccat_id
         JOIN cat_mat_roughness r ON r.matcat_id = ca.matcat_id
-        JOIN cat_mat m ON m.id = ca.matcat_id
         WHERE a.sector_id IN ({ph}) AND a.state = 1
           AND r.cur_period_id = 'Default'
         ORDER BY r.roughness DESC
