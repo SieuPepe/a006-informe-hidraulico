@@ -194,9 +194,15 @@ def _prompt_diagnostico(contexto, tipo):
             "o velocidad excesiva, y las causas probables."
         ),
         "retencion": (
-            "Redacta un diagnostico de los tiempos de retencion del agua en la red "
-            "y en los depositos, indicando si los valores son adecuados "
+            "Redacta un diagnostico de los tiempos de retencion del agua en la red, "
+            "indicando si los valores son adecuados "
             "para garantizar la calidad del agua potable."
+        ),
+        "autonomia": (
+            "Redacta un diagnostico de la autonomia de los depositos de regulacion, "
+            "analizando si la capacidad de almacenamiento es suficiente para "
+            "garantizar la continuidad del suministro ante paradas de produccion "
+            "o picos de demanda. Identifica los depositos con menor autonomia."
         ),
     }
     return (f"Contexto general:\n{contexto}\n\n"
@@ -313,6 +319,10 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
     logger.info("Generando diagnostico de retencion...")
     textos["diagnostico_retencion"] = _llamar_claude(
         _prompt_diagnostico(contexto, "retencion"))
+
+    logger.info("Generando diagnostico de autonomia...")
+    textos["diagnostico_autonomia"] = _llamar_claude(
+        _prompt_diagnostico(contexto, "autonomia"))
 
     logger.info("Generando diagnostico global...")
     textos["diagnostico_global"] = _llamar_claude(

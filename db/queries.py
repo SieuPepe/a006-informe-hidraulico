@@ -333,6 +333,119 @@ def get_demandas_por_sector(sector_ids):
 
 
 # ─────────────────────────────────────────────────────────────
+# INDICADORES TPI (Alegre & Coelho, 1995 — IWA)
+# ─────────────────────────────────────────────────────────────
+
+def get_tpi_por_sector(result_id, sector_ids):
+    """Calcula TPI de presión y velocidad promediando sobre todos los timesteps.
+
+    Método TPI: curva de penalización trapecial continua 0-1, promedio aritmético.
+    press > 0 excluye nodos de aducción próximos a reservorios.
+    ABS(vel) porque EPANET puede devolver negativos según dirección del flujo.
+    """
+    ph = ','.join(['%s'] * len(sector_ids))
+
+    # TPI presión
+    tpi_press = execute_query(f"""
+        SELECT n.sector_id,
+            ROUND(AVG(
+                CASE
+                    WHEN rn.press < 10 THEN 0.0
+                    WHEN rn.press < 20 THEN (rn.press - 10.0) / 10.0
+                    WHEN rn.press <= 60 THEN 1.0
+                    WHEN rn.press <= 80 THEN (80.0 - rn.press) / 20.0
+                    ELSE 0.0
+                END
+            )::numeric, 4) AS tpi_presion
+        FROM rpt_node rn
+        JOIN node n ON n.node_id = rn.node_id
+        WHERE rn.result_id = %s
+          AND n.sector_id IN ({ph})
+          AND n.epa_type = 'JUNCTION'
+          AND rn.press > 0
+        GROUP BY n.sector_id
+    """, [result_id] + list(sector_ids))
+
+    # TPI velocidad
+    tpi_vel = execute_query(f"""
+        SELECT a.sector_id,
+            ROUND(AVG(
+                CASE
+                    WHEN ABS(ra.vel) < 0.02 THEN 0.0
+                    WHEN ABS(ra.vel) < 0.05 THEN (ABS(ra.vel) - 0.02) / 0.03
+                    WHEN ABS(ra.vel) <= 1.50 THEN 1.0
+                    WHEN ABS(ra.vel) <= 3.00 THEN (3.00 - ABS(ra.vel)) / 1.50
+                    ELSE 0.0
+                END
+            )::numeric, 4) AS tpi_velocidad
+        FROM rpt_arc ra
+        JOIN v_edit_arc a ON a.arc_id = ra.arc_id
+        WHERE ra.result_id = %s
+          AND a.sector_id IN ({ph})
+        GROUP BY a.sector_id
+    """, [result_id] + list(sector_ids))
+
+    # Combinar en dict por sector_id
+    result = {}
+    for r in tpi_press:
+        sid = r['sector_id']
+        result[sid] = {'tpi_presion': r['tpi_presion']}
+    for r in tpi_vel:
+        sid = r['sector_id']
+        if sid not in result:
+            result[sid] = {}
+        result[sid]['tpi_velocidad'] = r['tpi_velocidad']
+
+    return result
+
+
+def get_autonomia_depositos(result_id, sector_ids):
+    """Calcula la autonomía de cada depósito individual.
+
+    Autonomía (h) = volumen útil medio (m³) / caudal salida medio (m³/h)
+    Caudal salida: promedio de ABS(flow) en arcos cuyo node_1 es el depósito.
+    """
+    ph = ','.join(['%s'] * len(sector_ids))
+    return execute_query(f"""
+        WITH dep_nivel AS (
+            SELECT n.node_id, n.code AS deposito, s.name AS sector,
+                n.sector_id,
+                ROUND(AVG(rn.head - n.elevation)::numeric, 2) AS nivel_medio,
+                COALESCE(mt.vutil, mt.vmax, 0) AS volumen_ref
+            FROM rpt_node rn
+            JOIN node n ON n.node_id = rn.node_id
+            JOIN sector s ON s.sector_id = n.sector_id
+            LEFT JOIN man_tank mt ON mt.node_id = n.node_id
+            WHERE rn.result_id = %s
+              AND n.sector_id IN ({ph})
+              AND n.epa_type = 'TANK'
+            GROUP BY n.node_id, n.code, s.name, n.sector_id, n.elevation, mt.vutil, mt.vmax
+        ),
+        dep_caudal AS (
+            SELECT a.node_1 AS node_id,
+                ROUND(AVG(ABS(ra.flow))::numeric, 3) AS caudal_salida_ls
+            FROM rpt_arc ra
+            JOIN v_edit_arc a ON a.arc_id = ra.arc_id
+            JOIN node n ON n.node_id = a.node_1 AND n.epa_type = 'TANK'
+            WHERE ra.result_id = %s
+              AND n.sector_id IN ({ph})
+            GROUP BY a.node_1
+        )
+        SELECT dn.deposito, dn.sector, dn.sector_id,
+            dn.nivel_medio,
+            dn.volumen_ref AS volumen_util_m3,
+            COALESCE(dc.caudal_salida_ls, 0) AS caudal_salida_ls,
+            CASE WHEN COALESCE(dc.caudal_salida_ls, 0) > 0
+                THEN ROUND((dn.volumen_ref / (dc.caudal_salida_ls * 3.6))::numeric, 1)
+                ELSE NULL
+            END AS autonomia_h
+        FROM dep_nivel dn
+        LEFT JOIN dep_caudal dc ON dc.node_id = dn.node_id
+        ORDER BY dn.sector, dn.deposito
+    """, [result_id] + list(sector_ids) + [result_id] + list(sector_ids))
+
+
+# ─────────────────────────────────────────────────────────────
 # RESULTADOS DE SIMULACIÓN
 # ─────────────────────────────────────────────────────────────
 
@@ -350,6 +463,8 @@ def get_resultados_simulacion(result_id, sector_ids):
     indicadores_ret = get_indicadores_retencion(
         result_id, sector_ids, timesteps.get('media')
     )
+    tpi = get_tpi_por_sector(result_id, sector_ids)
+    autonomia = get_autonomia_depositos(result_id, sector_ids)
 
     return {
         'timesteps': timesteps,
@@ -357,6 +472,8 @@ def get_resultados_simulacion(result_id, sector_ids):
         'por_sector': por_sector,
         'depositos_eps': depositos_eps,
         'indicadores_retencion': indicadores_ret,
+        'tpi': tpi,
+        'autonomia': autonomia,
     }
 
 
