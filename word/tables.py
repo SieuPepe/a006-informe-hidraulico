@@ -22,15 +22,20 @@ NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 # ─────────────────────────────────────────────────────────────
 
 def _find_table_by_marker(doc, marker: str):
-    """Busca una tabla cuyo XML contenga el texto del marcador.
+    """Busca una tabla cuyo contenido de texto contenga el marcador.
 
-    El marcador puede estar en texto oculto (vanish) dentro de cualquier celda.
-    Recorre todas las tablas y comprueba el XML crudo para detectar marcadores
-    con formato <w:vanish/>.
+    Word puede dividir el texto del marcador en múltiples <w:t> elements,
+    por lo que concatenamos todo el texto de cada celda antes de buscar.
+    Busca con y sin las llaves {{ }}.
     """
+    # Extraer el nombre base sin llaves para búsqueda más robusta
+    marker_name = marker.replace("{{", "").replace("}}", "")
+
     for table in doc.tables:
-        xml = etree.tostring(table._tbl, encoding="unicode")
-        if marker in xml:
+        # Concatenar todo el texto de todos los <w:t> de la tabla
+        t_elems = table._tbl.findall(f'.//{{{NS_W}}}t')
+        full_text = ''.join(t.text or '' for t in t_elems)
+        if marker_name in full_text:
             return table
     return None
 
