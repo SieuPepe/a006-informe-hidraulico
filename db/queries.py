@@ -465,11 +465,11 @@ def get_indicadores_retencion(result_id, sector_ids, timestep_media):
         SELECT
             a.sector_id,
             s.name AS nombre_sector,
-            ROUND(SUM(PI() * POWER(ca.dnom / 1000.0 / 2.0, 2) * a.gis_length)::numeric, 2)
+            ROUND(SUM(PI() * POWER(ca.dnom::numeric / 1000.0 / 2.0, 2) * a.gis_length)::numeric, 2)
                 AS volumen_red_m3,
             ROUND(AVG(ABS(ra.flow))::numeric, 3) AS caudal_medio_ls,
             ROUND(
-                (SUM(PI() * POWER(ca.dnom / 1000.0 / 2.0, 2) * a.gis_length)
+                (SUM(PI() * POWER(ca.dnom::numeric / 1000.0 / 2.0, 2) * a.gis_length)
                  / NULLIF(AVG(ABS(ra.flow)) / 1000.0, 0) / 3600.0)::numeric, 1
             ) AS tiempo_retencion_red_h
         FROM rpt_arc ra
