@@ -12,8 +12,8 @@ from db.connection import execute_query, execute_scalar
 # ─────────────────────────────────────────────────────────────
 
 def get_municipio_nombre(muni_id):
-    """Devuelve el nombre del municipio a partir de su expl_id."""
-    sql = "SELECT name FROM exploitation WHERE expl_id = %s LIMIT 1"
+    """Devuelve el nombre del municipio a partir de su muni_id."""
+    sql = "SELECT name FROM ext_municipality WHERE muni_id = %s LIMIT 1"
     return execute_scalar(sql, (muni_id,))
 
 

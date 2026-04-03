@@ -45,10 +45,10 @@ def solicitar_parametros():
 
     # 2. muni_id
     print("\n[2/8] Identificación del municipio")
-    muni_id = input("  Introduce el muni_id (expl_id): ").strip()
+    muni_id = input("  Introduce el muni_id (muni_id): ").strip()
     nombre = get_municipio_nombre(muni_id)
     if not nombre:
-        print(f"  ERROR: No se encontró ningún municipio con expl_id={muni_id}")
+        print(f"  ERROR: No se encontró ningún municipio con muni_id={muni_id}")
         sys.exit(1)
     print(f"  Municipio: {nombre}")
 
@@ -94,7 +94,7 @@ def solicitar_parametros():
 
     # 8. Confirmación
     print("\n[8/8] Resumen de parámetros")
-    print(f"  Municipio:  {nombre} (expl_id={muni_id})")
+    print(f"  Municipio:  {nombre} (muni_id={muni_id})")
     print(f"  Sectores:   {sector_ids}")
     print(f"  Simulación: {result_id}")
     print(f"  Plantilla:  {Path(plantilla).name}")
