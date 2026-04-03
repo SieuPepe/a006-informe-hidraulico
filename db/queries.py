@@ -42,7 +42,7 @@ def get_timesteps_escenarios(result_id, sector_ids):
     sql = f"""
         SELECT ra.time, SUM(ABS(ra.flow)) AS caudal_total
         FROM rpt_arc ra
-        JOIN arc a ON a.arc_id = ra.arc_id
+        JOIN v_edit_arc a ON a.arc_id = ra.arc_id
         WHERE ra.result_id = %s
           AND a.sector_id IN ({placeholders})
         GROUP BY ra.time
@@ -72,16 +72,16 @@ def get_datos_municipio(muni_id, sector_ids):
     # Longitudes y conteo de arcos
     long_data = execute_query(f"""
         SELECT
-            ROUND(SUM(ST_Length(the_geom)) / 1000.0, 2) AS longitud_total_km,
+            ROUND(SUM(gis_length) / 1000.0, 2) AS longitud_total_km,
             COUNT(*) AS num_arcos
-        FROM arc
+        FROM v_edit_arc
         WHERE sector_id IN ({ph}) AND state = 1
     """, sector_ids)
 
     # Longitud por nivel funcional — usa feature_type del arc
     long_prim = execute_scalar(f"""
-        SELECT ROUND(SUM(ST_Length(the_geom)) / 1000.0, 2)
-        FROM arc
+        SELECT ROUND(SUM(gis_length) / 1000.0, 2)
+        FROM v_edit_arc
         WHERE sector_id IN ({ph}) AND state = 1
           AND feature_type ILIKE '%%CONDUIT%%'
     """, sector_ids) or 0
@@ -192,7 +192,7 @@ def get_datos_sectores(sector_ids):
             s.sector_id,
             s.name AS nombre_sector,
             COUNT(DISTINCT a.arc_id) AS num_arcos,
-            ROUND(SUM(ST_Length(a.the_geom)) / 1000.0, 2) AS longitud_km,
+            ROUND(SUM(a.gis_length) / 1000.0, 2) AS longitud_km,
             COUNT(DISTINCT CASE WHEN n.epa_type = 'JUNCTION' THEN n.node_id END) AS num_nodos,
             COUNT(DISTINCT CASE WHEN n.epa_type = 'TANK'     THEN n.node_id END) AS num_depositos,
             COUNT(DISTINCT CASE WHEN n.epa_type = 'PUMP'     THEN n.node_id END) AS num_bombas,
@@ -203,7 +203,7 @@ def get_datos_sectores(sector_ids):
             ROUND(MAX(CASE WHEN n.epa_type = 'JUNCTION' AND n.elevation > 0
                        THEN n.elevation END)::numeric, 0) AS cota_max
         FROM sector s
-        LEFT JOIN arc a    ON a.sector_id = s.sector_id AND a.state = 1
+        LEFT JOIN v_edit_arc a ON a.sector_id = s.sector_id AND a.state = 1
         LEFT JOIN node n   ON n.sector_id = s.sector_id AND n.state = 1
         LEFT JOIN connec c ON c.sector_id = s.sector_id AND c.state = 1
         WHERE s.sector_id IN ({ph})
@@ -259,10 +259,10 @@ def get_materiales_red(sector_ids, nivel='primaria'):
         SELECT
             ca.matcat_id AS material,
             CONCAT(MIN(ca.dnom)::text, ' - ', MAX(ca.dnom)::text) AS rango_diametros_mm,
-            ROUND(SUM(ST_Length(a.the_geom))::numeric, 0) AS longitud_m,
-            ROUND(100.0 * SUM(ST_Length(a.the_geom)) /
-                NULLIF(SUM(SUM(ST_Length(a.the_geom))) OVER (), 0), 1) AS pct_total
-        FROM arc a
+            ROUND(SUM(a.gis_length)::numeric, 0) AS longitud_m,
+            ROUND(100.0 * SUM(a.gis_length) /
+                NULLIF(SUM(SUM(a.gis_length)) OVER (), 0), 1) AS pct_total
+        FROM v_edit_arc a
         JOIN cat_arc ca ON ca.id = a.arccat_id
         WHERE a.sector_id IN ({ph}) AND a.state = 1
         GROUP BY ca.matcat_id
@@ -278,7 +278,7 @@ def get_rugosidades(sector_ids):
             ca.matcat_id AS codigo,
             ca.matcat_id AS material,
             r.roughness AS coeficiente_c
-        FROM arc a
+        FROM v_edit_arc a
         JOIN cat_arc ca ON ca.id = a.arccat_id
         JOIN cat_mat_roughness r ON r.matcat_id = ca.matcat_id
         WHERE a.sector_id IN ({ph}) AND a.state = 1
@@ -373,7 +373,7 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
                 ROUND(100.0 * COUNT(CASE WHEN ABS(ra.vel) > 1.5 THEN 1 END)
                     / NULLIF(COUNT(*), 0), 1) AS pct_alta_vel
             FROM rpt_arc ra
-            JOIN arc a ON a.arc_id = ra.arc_id
+            JOIN v_edit_arc a ON a.arc_id = ra.arc_id
             WHERE ra.result_id = %s AND ra.time = %s
               AND a.sector_id IN ({ph})
         """, p_arcos)
@@ -421,7 +421,7 @@ def get_resultados_por_sector(result_id, sector_ids, timesteps):
                     ROUND(AVG(ra.headloss / NULLIF(ra.length / 1000.0, 0))::numeric, 3)
                         AS perdida_unitaria_media
                 FROM rpt_arc ra
-                JOIN arc a ON a.arc_id = ra.arc_id
+                JOIN v_edit_arc a ON a.arc_id = ra.arc_id
                 WHERE ra.result_id = %s AND ra.time = %s AND a.sector_id = %s
             """, p)
 
@@ -465,15 +465,15 @@ def get_indicadores_retencion(result_id, sector_ids, timestep_media):
         SELECT
             a.sector_id,
             s.name AS nombre_sector,
-            ROUND(SUM(PI() * POWER(ca.dnom / 1000.0 / 2.0, 2) * ST_Length(a.the_geom))::numeric, 2)
+            ROUND(SUM(PI() * POWER(ca.dnom / 1000.0 / 2.0, 2) * a.gis_length)::numeric, 2)
                 AS volumen_red_m3,
             ROUND(AVG(ABS(ra.flow))::numeric, 3) AS caudal_medio_ls,
             ROUND(
-                (SUM(PI() * POWER(ca.dnom / 1000.0 / 2.0, 2) * ST_Length(a.the_geom))
+                (SUM(PI() * POWER(ca.dnom / 1000.0 / 2.0, 2) * a.gis_length)
                  / NULLIF(AVG(ABS(ra.flow)) / 1000.0, 0) / 3600.0)::numeric, 1
             ) AS tiempo_retencion_red_h
         FROM rpt_arc ra
-        JOIN arc a ON a.arc_id = ra.arc_id
+        JOIN v_edit_arc a ON a.arc_id = ra.arc_id
         JOIN cat_arc ca ON ca.id = a.arccat_id
         JOIN sector s ON s.sector_id = a.sector_id
         WHERE ra.result_id = %s AND ra.time = %s
