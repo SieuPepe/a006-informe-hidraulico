@@ -100,12 +100,13 @@ def get_datos_municipio(muni_id, sector_ids):
         WHERE sector_id IN ({ph}) AND state = 1
     """, sector_ids) or 0
 
-    # Depósitos
+    # Depósitos (volumen desde man_tank)
     dep = execute_query(f"""
         SELECT COUNT(*) AS n,
-               0 AS vol
-        FROM node
-        WHERE sector_id IN ({ph}) AND state = 1 AND epa_type = 'TANK'
+               COALESCE(ROUND(SUM(COALESCE(mt.vutil, mt.vmax, 0))::numeric, 0), 0) AS vol
+        FROM node n
+        LEFT JOIN man_tank mt ON mt.node_id = n.node_id
+        WHERE n.sector_id IN ({ph}) AND n.state = 1 AND n.epa_type = 'TANK'
     """, sector_ids)
 
     # Bombas
@@ -213,13 +214,14 @@ def get_datos_sectores(sector_ids):
     for s in sectores:
         sid = s['sector_id']
         s['depositos'] = execute_query("""
-            SELECT code, COALESCE(label, code) AS nombre,
-                ROUND(elevation::numeric, 2) AS cota_solera,
-                ROUND(COALESCE(elevation, elevation)::numeric, 2) AS cota_rebose,
-                0 AS volumen_m3
-            FROM node
-            WHERE sector_id = %s AND state = 1 AND epa_type = 'TANK'
-            ORDER BY code
+            SELECT n.code, COALESCE(n.label, n.code) AS nombre,
+                ROUND(COALESCE(mt.elev_fondo, n.elevation)::numeric, 2) AS cota_solera,
+                ROUND((COALESCE(mt.elev_fondo, n.elevation) + COALESCE(mt.hmax, 0))::numeric, 2) AS cota_rebose,
+                COALESCE(mt.vutil, mt.vmax, 0) AS volumen_m3
+            FROM node n
+            LEFT JOIN man_tank mt ON mt.node_id = n.node_id
+            WHERE n.sector_id = %s AND n.state = 1 AND n.epa_type = 'TANK'
+            ORDER BY n.code
         """, (sid,))
         s['fuentes'] = execute_query("""
             SELECT code, COALESCE(label, code) AS nombre,
@@ -442,14 +444,15 @@ def get_depositos_eps(result_id, sector_ids):
             ROUND(MIN(rn.head - n.elevation)::numeric, 2) AS nivel_minimo,
             ROUND(MAX(rn.head - n.elevation)::numeric, 2) AS nivel_maximo,
             ROUND(AVG(rn.head - n.elevation)::numeric, 2) AS nivel_medio,
-            0 AS volumen_util_m3
+            COALESCE(mt.vutil, mt.vmax, 0) AS volumen_util_m3
         FROM rpt_node rn
         JOIN node n ON n.node_id = rn.node_id
         JOIN sector s ON s.sector_id = n.sector_id
+        LEFT JOIN man_tank mt ON mt.node_id = n.node_id
         WHERE rn.result_id = %s
           AND n.sector_id IN ({ph})
           AND n.epa_type = 'TANK'
-        GROUP BY n.code, s.name, n.elevation
+        GROUP BY n.code, s.name, n.elevation, mt.vutil, mt.vmax
         ORDER BY s.name, n.code
     """, [result_id] + list(sector_ids))
 
