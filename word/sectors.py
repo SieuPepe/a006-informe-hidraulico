@@ -67,11 +67,12 @@ def _find_template_block(body):
     """
     Locate the template sector block inside the document body.
 
+    The template block is the SUB-heading "5.3.1 Sector XXXX", NOT the
+    parent heading "5.3. Análisis por sector hidráulico". We identify
+    it by looking for a heading that contains both "Sector" AND "XXXX"
+    (the placeholder text), or a heading matching "5.3.1".
+
     Returns (start_index, end_index) — indices into body's child elements.
-    The range [start_index, end_index) covers the complete block:
-      - start_index: the heading paragraph containing "Sector"
-      - end_index: the element just AFTER the last element of the block
-        (i.e. the next heading of same or higher level, or end of body)
     """
     children = list(body)
     start_idx = None
@@ -90,10 +91,17 @@ def _find_template_block(body):
         if start_idx is not None and level <= template_level:
             return start_idx, i
 
-        # Look for the heading that contains "Sector" (case-insensitive)
+        # Look for the TEMPLATE heading: must contain "XXXX" or "5.3.1"
+        # This avoids matching "5.3. Análisis por sector hidráulico"
         if start_idx is None:
             text = _paragraph_text(elem)
-            if re.search(r'\bSector\b', text, re.IGNORECASE):
+            is_template = (
+                'XXXX' in text
+                or re.search(r'5\.3\.1', text)
+                or (re.search(r'\bSector\b', text, re.IGNORECASE)
+                    and level >= 3)  # Sub-heading level, not parent
+            )
+            if is_template:
                 start_idx = i
                 template_level = level
 
