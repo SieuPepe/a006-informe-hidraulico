@@ -454,35 +454,47 @@ def _fill_elementos_modelo(doc, datos_muni):
 
 
 def _fill_rugosidades(doc, datos_muni):
-    """TABLA_RUGOSIDADES — Coeficientes de Hazen-Williams."""
+    """TABLA_RUGOSIDADES — Coeficientes de Hazen-Williams (Cap 3.4).
+
+    Columnas: Código | Material | Coeficiente C | Observaciones
+    """
     table = _find_table_by_marker(doc, "{{TABLA_RUGOSIDADES}}")
     if not table:
         logger.warning("Tabla TABLA_RUGOSIDADES no encontrada.")
         return
+    rugosidades = datos_muni.get("rugosidades", [])
+    if not rugosidades:
+        return
     _clear_data_rows(table)
-    for r in datos_muni.get("rugosidades", []):
+    for r in rugosidades:
         _add_row(table, [
-            _safe_get(r, "codigo"),
+            _safe_get(r, "codigo", _safe_get(r, "id")),
             _safe_get(r, "material"),
             _safe_get(r, "coeficiente_c"),
-            "",  # Observaciones
+            _safe_get(r, "observaciones", _safe_get(r, "descript")),
         ])
 
 
 def _fill_demandas(doc, datos_muni):
-    """TABLA_DEMANDAS — Demandas por sector hidráulico."""
+    """TABLA_DEMANDAS — Demandas por sector hidráulico (Cap 3.5).
+
+    Columnas: Sector hidráulico | Nº abonados | Demanda media (l/s) |
+              Demanda media (m³/día) | % sobre total
+    """
     table = _find_table_by_marker(doc, "{{TABLA_DEMANDAS}}")
     if not table:
         logger.warning("Tabla TABLA_DEMANDAS no encontrada.")
         return
-    _clear_data_rows(table)
     demandas = datos_muni.get("demandas_sector", [])
-    total_ls = sum(float(_safe_get(d, "demanda_media_ls", 0)) for d in demandas)
+    if not demandas:
+        return
+    _clear_data_rows(table)
+    total_ls = sum(float(_safe_get(d, "demanda_media_ls", 0) or 0) for d in demandas)
     for d in demandas:
-        dem_ls = float(_safe_get(d, "demanda_media_ls", 0))
+        dem_ls = float(_safe_get(d, "demanda_media_ls", 0) or 0)
         pct = round(100 * dem_ls / total_ls, 1) if total_ls > 0 else 0
         _add_row(table, [
-            _safe_get(d, "nombre_sector"),
+            _safe_get(d, "nombre_sector", _safe_get(d, "sector_id")),
             _safe_get(d, "num_abonados"),
             _safe_get(d, "demanda_media_ls"),
             _safe_get(d, "demanda_media_m3dia"),
@@ -591,14 +603,22 @@ def _fill_depositos_eps(doc, resultados):
 
 
 def _fill_indicadores_presion(doc, resultados, datos_sectores):
-    """TABLA_INDICADORES_PRESION — Indicadores de presión por sector."""
+    """TABLA_INDICADORES_PRESION — Indicadores de presión por sector (Cap 6.2).
+
+    Columnas: Sector | Presión mínima escenario punta (m.c.a.) |
+              Presión media escenario medio (m.c.a.) |
+              Presión máxima escenario nocturno (m.c.a.) |
+              % nodos < 10 m.c.a. | % nodos > 60 m.c.a. | Clasificación
+    """
     table = _find_table_by_marker(doc, "{{TABLA_INDICADORES_PRESION}}")
     if not table:
         logger.warning("Tabla TABLA_INDICADORES_PRESION no encontrada.")
         return
+    por_sector = resultados.get("por_sector", {})
+    if not por_sector:
+        return
     _clear_data_rows(table)
 
-    por_sector = resultados.get("por_sector", {})
     for s in datos_sectores:
         sid = s["sector_id"]
         punta = por_sector.get(sid, {}).get("punta", {})
@@ -606,21 +626,27 @@ def _fill_indicadores_presion(doc, resultados, datos_sectores):
         nocturno = por_sector.get(sid, {}).get("nocturno", {})
 
         p_min_punta = _safe_get(punta, "presion_minima")
+        p_media_media = _safe_get(media, "presion_media")
         p_max_nocturno = _safe_get(nocturno, "presion_maxima")
-        total_nodos = int(_safe_get(punta, "total_nodos", 1) or 1)
-        pct_baja = round(
-            100 * int(_safe_get(punta, "nodos_baja_presion", 0)) / total_nodos, 1
-        ) if total_nodos > 0 else 0
-        pct_alta = round(
-            100 * int(_safe_get(nocturno, "nodos_alta_presion", 0)) / total_nodos, 1
-        ) if total_nodos > 0 else 0
+
+        # Use pct fields if available, otherwise compute from node counts
+        pct_baja = _safe_get(punta, "pct_baja_presion")
+        pct_alta = _safe_get(nocturno, "pct_alta_presion")
+        if not pct_baja and punta:
+            total = int(_safe_get(punta, "total_nodos", 0) or 0)
+            n_baja = int(_safe_get(punta, "nodos_baja_presion", 0) or 0)
+            pct_baja = round(100 * n_baja / total, 1) if total > 0 else 0
+        if not pct_alta and nocturno:
+            total = int(_safe_get(nocturno, "total_nodos", 0) or 0)
+            n_alta = int(_safe_get(nocturno, "nodos_alta_presion", 0) or 0)
+            pct_alta = round(100 * n_alta / total, 1) if total > 0 else 0
 
         clasif = _clasificar_presion(p_min_punta, p_max_nocturno)
 
         _add_row(table, [
             _safe_get(s, "nombre_sector"),
             p_min_punta,
-            _safe_get(media, "presion_media"),
+            p_media_media,
             p_max_nocturno,
             pct_baja,
             pct_alta,
@@ -629,24 +655,34 @@ def _fill_indicadores_presion(doc, resultados, datos_sectores):
 
 
 def _fill_indicadores_velocidad(doc, resultados, datos_sectores):
-    """TABLA_INDICADORES_VELOCIDAD — Indicadores de velocidad por sector."""
+    """TABLA_INDICADORES_VELOCIDAD — Indicadores de velocidad por sector (Cap 6.3).
+
+    Columnas: Sector | Velocidad media (m/s) | Velocidad máxima (m/s) |
+              % tramos v < 0,05 m/s | % tramos v > 1,50 m/s |
+              Pérdida unitaria media (m/km) | Clasificación
+    """
     table = _find_table_by_marker(doc, "{{TABLA_INDICADORES_VELOCIDAD}}")
     if not table:
         logger.warning("Tabla TABLA_INDICADORES_VELOCIDAD no encontrada.")
         return
+    por_sector = resultados.get("por_sector", {})
+    if not por_sector:
+        return
     _clear_data_rows(table)
 
-    por_sector = resultados.get("por_sector", {})
     for s in datos_sectores:
         sid = s["sector_id"]
         media = por_sector.get(sid, {}).get("media", {})
+        if not media:
+            continue
         vel_media = _safe_get(media, "velocidad_media")
-        clasif = _clasificar_velocidad(vel_media)
+        vel_max = _safe_get(media, "velocidad_maxima")
+        clasif = _clasificar_velocidad(vel_media, vel_max)
 
         _add_row(table, [
             _safe_get(s, "nombre_sector"),
             vel_media,
-            _safe_get(media, "velocidad_maxima"),
+            vel_max,
             _safe_get(media, "pct_baja_vel"),
             _safe_get(media, "pct_alta_vel"),
             _safe_get(media, "perdida_unitaria_media"),
@@ -705,16 +741,30 @@ def _fill_retencion(doc, resultados, datos_sectores):
 
 
 def _fill_clasificacion(doc, resultados, datos_sectores):
-    """TABLA_CLASIFICACION — Clasificación global por sector."""
+    """TABLA_CLASIFICACION — Clasificación global por sector (Cap 6.5).
+
+    Columnas: Sector | Clasificación presión | Clasificación velocidad |
+              Clasificación retención | Clasificación global
+    """
     table = _find_table_by_marker(doc, "{{TABLA_CLASIFICACION}}")
     if not table:
         logger.warning("Tabla TABLA_CLASIFICACION no encontrada.")
         return
+    por_sector = resultados.get("por_sector", {})
+    if not por_sector and not datos_sectores:
+        return
     _clear_data_rows(table)
 
-    por_sector = resultados.get("por_sector", {})
     retencion = resultados.get("indicadores_retencion", [])
+    depositos_eps = resultados.get("depositos_eps", [])
     ret_by_sector = {r.get("sector_id"): r for r in retencion}
+
+    # Build deposit volume lookup by sector name
+    dep_by_sector: dict[str, float] = {}
+    for d in depositos_eps:
+        sec = d.get("sector", "")
+        dep_by_sector[sec] = dep_by_sector.get(sec, 0) + float(
+            _safe_get(d, "volumen_util_m3", 0) or 0)
 
     for s in datos_sectores:
         sid = s["sector_id"]
@@ -727,19 +777,53 @@ def _fill_clasificacion(doc, resultados, datos_sectores):
             _safe_get(punta, "presion_minima"),
             _safe_get(nocturno, "presion_maxima"),
         )
-        c_velocidad = _clasificar_velocidad(_safe_get(media, "velocidad_media"))
-        c_retencion = _clasificar_retencion(
-            _safe_get(r, "tiempo_retencion_red_h", 0)
+        c_velocidad = _clasificar_velocidad(
+            _safe_get(media, "velocidad_media"),
+            _safe_get(media, "velocidad_maxima"),
         )
+
+        # Use worst retention time (network vs deposit)
+        t_red = _safe_get(r, "tiempo_retencion_red_h")
+        nombre = _safe_get(s, "nombre_sector")
+        vol_dep = dep_by_sector.get(nombre, 0)
+        caudal = float(_safe_get(r, "caudal_medio_ls", 0) or 0)
+        t_dep = (vol_dep / (caudal / 1000.0) / 3600.0) if caudal > 0 and vol_dep > 0 else None
+        tiempos = [t for t in (
+            float(t_red) if t_red not in (None, "", "—") else None,
+            t_dep,
+        ) if t is not None]
+        peor_t = max(tiempos) if tiempos else None
+        c_retencion = _clasificar_retencion(peor_t)
+
         c_global = _clasificar_global(c_presion, c_velocidad, c_retencion)
 
         _add_row(table, [
-            _safe_get(s, "nombre_sector"),
+            nombre,
             c_presion,
             c_velocidad,
             c_retencion,
             c_global,
         ])
+
+
+def _fill_caudalimetros(doc, datos_muni):
+    """TABLA_CAUDALIMETROS — Caudalímetros (Anexo 1).
+
+    Columnas variables según los datos disponibles.
+    """
+    table = _find_table_by_marker(doc, "{{TABLA_CAUDALIMETROS}}")
+    if not table:
+        logger.warning("Tabla TABLA_CAUDALIMETROS no encontrada.")
+        return
+    caudalimetros = datos_muni.get("caudalimetros", [])
+    if not caudalimetros:
+        return
+    _clear_data_rows(table)
+    for c in caudalimetros:
+        if isinstance(c, dict):
+            _add_row(table, list(c.values()))
+        elif isinstance(c, (list, tuple)):
+            _add_row(table, list(c))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -749,43 +833,58 @@ def _fill_clasificacion(doc, resultados, datos_sectores):
 def rellenar_tablas(doc, datos_muni, datos_sectores, resultados):
     """Rellena todas las tablas del documento Word.
 
+    Busca tablas por marcadores ocultos {{TABLA_XXX}}, elimina las filas de
+    datos vacías existentes y añade filas con los datos reales.
+
     Args:
         doc: Objeto Document de python-docx.
-        datos_muni: Diccionario con datos del municipio.
-        datos_sectores: Lista de dicts con datos por sector.
-        resultados: Diccionario con resultados de simulación.
+        datos_muni: Diccionario con datos del municipio. Puede incluir claves
+            opcionales: 'materiales_primaria', 'materiales_secundaria',
+            'rugosidades', 'demandas_sector', 'reglas', 'caudalimetros',
+            'grupos_presion'.
+        datos_sectores: Lista de dicts con datos por sector. Cada dict puede
+            contener listas anidadas: 'depositos', 'fuentes', 'bombas', 'vrp'.
+        resultados: Diccionario con resultados de simulación. Claves esperadas:
+            'globales' (dict escenario -> valores),
+            'por_sector' (dict sector_id -> escenario -> valores),
+            'depositos_eps' (lista), 'indicadores_retencion' (lista),
+            'timesteps' (dict).
     """
     logger.info("Rellenando tablas del documento...")
 
     # Capítulo 2 — Descripción del sistema
-    _fill_fuentes(doc, datos_sectores)
-    _fill_depositos(doc, datos_sectores)
-    _fill_red_materiales(doc, datos_muni, "primaria")
-    _fill_red_materiales(doc, datos_muni, "secundaria")
-    _fill_bombeos(doc, datos_sectores)
-    _fill_grupos_presion(doc, datos_sectores)
-    _fill_vrp(doc, datos_sectores)
-    _fill_sectores(doc, datos_sectores)
+    _fill_fuentes(doc, datos_sectores)                          # Cap 2.3
+    _fill_depositos(doc, datos_sectores)                        # Cap 2.4
+    _fill_red_materiales(doc, datos_muni, "primaria")           # Cap 2.5
+    _fill_red_materiales(doc, datos_muni, "secundaria")         # Cap 2.5
+    _fill_bombeos(doc, datos_sectores)                          # Cap 2.6
+    _fill_grupos_presion(doc, datos_muni, datos_sectores)       # Cap 2.6
+    _fill_vrp(doc, datos_sectores)                              # Cap 2.6
+    _fill_sectores(doc, datos_sectores)                         # Cap 2.7
+    _fill_reglas(doc, datos_muni)                               # Cap 2.8
 
     # Capítulo 3 — Construcción del modelo
-    _fill_elementos_modelo(doc, datos_muni)
-    _fill_rugosidades(doc, datos_muni)
-    _fill_demandas(doc, datos_muni)
+    _fill_elementos_modelo(doc, datos_muni)                     # Cap 3.3
+    _fill_rugosidades(doc, datos_muni)                          # Cap 3.4
+    _fill_demandas(doc, datos_muni)                             # Cap 3.5
 
     # Capítulo 5 — Resultados del análisis
-    _fill_resultados_globales(doc, resultados)
-    _fill_sector_results(doc, resultados, datos_sectores,
+    _fill_resultados_globales(doc, resultados)                  # Cap 5.2
+    _fill_sector_results(doc, resultados, datos_sectores,       # Cap 5.3
                          "{{TABLA_SECTOR_MEDIA}}", "media")
-    _fill_sector_results(doc, resultados, datos_sectores,
+    _fill_sector_results(doc, resultados, datos_sectores,       # Cap 5.3
                          "{{TABLA_SECTOR_MAXIMA}}", "punta")
-    _fill_sector_results(doc, resultados, datos_sectores,
+    _fill_sector_results(doc, resultados, datos_sectores,       # Cap 5.3
                          "{{TABLA_SECTOR_MINIMA}}", "nocturno")
-    _fill_depositos_eps(doc, resultados)
+    _fill_depositos_eps(doc, resultados)                        # Cap 5.3
 
     # Capítulo 6 — Indicadores
-    _fill_indicadores_presion(doc, resultados, datos_sectores)
-    _fill_indicadores_velocidad(doc, resultados, datos_sectores)
-    _fill_retencion(doc, resultados, datos_sectores)
-    _fill_clasificacion(doc, resultados, datos_sectores)
+    _fill_indicadores_presion(doc, resultados, datos_sectores)  # Cap 6.2
+    _fill_indicadores_velocidad(doc, resultados, datos_sectores)  # Cap 6.3
+    _fill_retencion(doc, resultados, datos_sectores)            # Cap 6.4
+    _fill_clasificacion(doc, resultados, datos_sectores)        # Cap 6.5
+
+    # Anexo 1 — Caudalímetros
+    _fill_caudalimetros(doc, datos_muni)                        # Anexo 1
 
     logger.info("Tablas rellenadas correctamente.")
