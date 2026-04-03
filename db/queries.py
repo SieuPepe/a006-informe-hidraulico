@@ -214,7 +214,7 @@ def get_datos_sectores(sector_ids):
     for s in sectores:
         sid = s['sector_id']
         s['depositos'] = execute_query("""
-            SELECT n.code, COALESCE(n.label, n.code) AS nombre,
+            SELECT n.code, COALESCE(n.descript, n.code) AS nombre,
                 ROUND(COALESCE(mt.elev_fondo, n.elevation)::numeric, 2) AS cota_solera,
                 ROUND((COALESCE(mt.elev_fondo, n.elevation) + COALESCE(mt.hmax, 0))::numeric, 2) AS cota_rebose,
                 COALESCE(mt.vutil, mt.vmax, 0) AS volumen_m3
@@ -224,20 +224,20 @@ def get_datos_sectores(sector_ids):
             ORDER BY n.code
         """, (sid,))
         s['fuentes'] = execute_query("""
-            SELECT code, COALESCE(label, code) AS nombre,
+            SELECT code, COALESCE(descript, code) AS nombre,
                 ROUND(elevation::numeric, 2) AS cota_toma
             FROM node
             WHERE sector_id = %s AND state = 1 AND epa_type = 'RESERVOIR'
             ORDER BY code
         """, (sid,))
         s['bombas'] = execute_query("""
-            SELECT code, COALESCE(label, code) AS nombre
+            SELECT code, COALESCE(descript, code) AS nombre
             FROM node
             WHERE sector_id = %s AND state = 1 AND epa_type = 'PUMP'
             ORDER BY code
         """, (sid,))
         s['vrp'] = execute_query("""
-            SELECT code, COALESCE(label, code) AS nombre
+            SELECT code, COALESCE(descript, code) AS nombre
             FROM node
             WHERE sector_id = %s AND state = 1
               AND epa_type IN ('PRV', 'VALVE')
