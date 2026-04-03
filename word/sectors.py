@@ -140,7 +140,8 @@ def _update_heading_text(p_elem, sector_number, sector_name):
     if not runs:
         return
 
-    new_text = f'5.3.{sector_number}. Sector {sector_name}'
+    # No incluir numeración — el estilo Ttulo3 la genera automáticamente
+    new_text = f'Sector {sector_name}'
 
     # Set the full text in the first run's <w:t> element
     first_run = runs[0]
@@ -376,6 +377,12 @@ def replicar_sectores(doc, datos_sectores, resultados):
     # Remove the original template block
     for elem in template_elements:
         body.remove(elem)
+
+    # Fill each sector's tables with its own data
+    from word.tables import rellenar_tabla_sector
+    for sector_number, sector_data in enumerate(datos_sectores, start=1):
+        sid = sector_data.get('sector_id')
+        rellenar_tabla_sector(doc, sector_data, sid, resultados, sector_number)
 
     logger.info(
         "Replicacion completada: %d bloques de sector generados.",
