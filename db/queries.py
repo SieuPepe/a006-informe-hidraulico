@@ -151,8 +151,8 @@ def get_datos_municipio(muni_id, sector_ids):
         float(d.get('demanda_media_ls') or 0) for d in demandas_sector
     )
 
-    longitud_total = float(long_data[0]["longitud_total_km"]) if long_data else 0
-    longitud_primaria = float(long_prim)
+    longitud_total = float(long_data[0]["longitud_total_km"] or 0) if long_data else 0
+    longitud_primaria = float(long_prim or 0)
     longitud_secundaria = round(longitud_total - longitud_primaria, 2)
 
     return {
