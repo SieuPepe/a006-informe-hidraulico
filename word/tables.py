@@ -248,8 +248,8 @@ def _fill_depositos(doc, datos_sectores):
             _safe_get(d, "nombre", _safe_get(d, "code")),
             _safe_get(d, "cota_solera"),
             _safe_get(d, "cota_rebose"),
-            "",  # Cota mínima operativa
-            "",  # Cota máxima operativa
+            _safe_get(d, "cota_minima"),
+            _safe_get(d, "cota_maxima"),
             _safe_get(d, "volumen_m3"),
             "",  # Nº de entradas
             "",  # Nº de salidas
@@ -364,8 +364,8 @@ def _fill_vrp(doc, datos_sectores):
     _clear_data_rows(table)
     for v in vrps:
         _add_row(table, [
-            _safe_get(v, "nombre", _safe_get(v, "code")),
-            _safe_get(v, "ubicacion", v.get("_sector", "")),
+            _safe_get(v, "code"),  # Nombre = código de la válvula
+            v.get("_sector", ""),  # Ubicación = sector
             _safe_get(v, "diametro_mm"),
             _safe_get(v, "presion_consigna"),
             v.get("_sector", ""),
@@ -387,36 +387,40 @@ def _fill_sectores(doc, datos_sectores):
         return
     _clear_data_rows(table)
     for s in datos_sectores:
-        # Estimar presión estática máxima
-        cota_alim = 0
         depositos = s.get("depositos", [])
-        if depositos:
-            cotas_rebose = [float(_safe_get(d, "cota_rebose", 0) or 0)
-                           for d in depositos]
-            cota_alim = max(cotas_rebose) if cotas_rebose else 0
+        fuentes = s.get("fuentes", [])
+
+        # Generar una fila por cada punto de alimentación (fuente o depósito)
+        puntos_alimentacion = []
+        for f in fuentes:
+            puntos_alimentacion.append((
+                _safe_get(f, "nombre", _safe_get(f, "code")),
+                "Gravedad",
+                float(_safe_get(f, "cota_toma", 0) or 0),
+            ))
+        for d in depositos:
+            puntos_alimentacion.append((
+                _safe_get(d, "nombre", _safe_get(d, "code")),
+                "Gravedad",
+                float(_safe_get(d, "cota_rebose", 0) or 0),
+            ))
+
+        if not puntos_alimentacion:
+            puntos_alimentacion = [("", "", 0)]
+
         cota_min = float(_safe_get(s, "cota_min", 0) or 0)
-        presion_est = round(cota_alim - cota_min, 1) if cota_alim > 0 else ""
+        cota_max = float(_safe_get(s, "cota_max", 0) or 0)
 
-        # Punto de alimentación
-        punto_alim = _safe_get(s, "punto_alimentacion")
-        tipo_alim = _safe_get(s, "tipo_alimentacion")
-        if not punto_alim:
-            if depositos:
-                punto_alim = depositos[0].get("nombre", depositos[0].get("code", ""))
-                tipo_alim = tipo_alim or "Gravedad"
-            fuentes = s.get("fuentes", [])
-            if fuentes:
-                punto_alim = fuentes[0].get("nombre", fuentes[0].get("code", ""))
-                tipo_alim = tipo_alim or "Gravedad"
-
-        _add_row(table, [
-            _safe_get(s, "nombre_sector", _safe_get(s, "sector_id")),
-            punto_alim,
-            tipo_alim,
-            _safe_get(s, "cota_min"),
-            _safe_get(s, "cota_max"),
-            presion_est,
-        ])
+        for punto_nombre, tipo, cota_alim in puntos_alimentacion:
+            presion_est = round(cota_alim - cota_min, 1) if cota_alim > 0 and cota_min > 0 else ""
+            _add_row(table, [
+                _safe_get(s, "nombre_sector", _safe_get(s, "sector_id")),
+                punto_nombre,
+                tipo,
+                _safe_get(s, "cota_min"),
+                _safe_get(s, "cota_max"),
+                presion_est,
+            ])
 
 
 def _fill_reglas(doc, datos_muni):
@@ -434,13 +438,16 @@ def _fill_reglas(doc, datos_muni):
         return
     _clear_data_rows(table)
     for r in reglas:
+        # v_edit_inp_rules tiene: id, sector_id, text
+        # Cols: ID Regla | Elemento controlado | Tipo | Condición | Acción | Depósito
+        # El texto completo de la regla va en la columna "Elemento controlado"
         _add_row(table, [
-            _safe_get(r, "id_regla", _safe_get(r, "id")),
-            _safe_get(r, "elemento_controlado"),
-            _safe_get(r, "tipo_elemento"),
-            _safe_get(r, "condicion", _safe_get(r, "condicion_activacion")),
-            _safe_get(r, "accion"),
-            _safe_get(r, "deposito_asociado"),
+            _safe_get(r, "id"),
+            _safe_get(r, "text"),  # Texto completo de la regla EPANET
+            "",  # Tipo
+            "",  # Condición
+            "",  # Acción
+            "",  # Depósito
         ])
 
 
@@ -864,13 +871,8 @@ def rellenar_tablas(doc, datos_muni, datos_sectores, resultados):
 
     # Capítulo 5 — Resultados del análisis
     _fill_resultados_globales(doc, resultados)                  # Cap 5.2
-    _fill_sector_results(doc, resultados, datos_sectores,       # Cap 5.3
-                         "{{TABLA_SECTOR_MEDIA}}", "media")
-    _fill_sector_results(doc, resultados, datos_sectores,       # Cap 5.3
-                         "{{TABLA_SECTOR_MAXIMA}}", "punta")
-    _fill_sector_results(doc, resultados, datos_sectores,       # Cap 5.3
-                         "{{TABLA_SECTOR_MINIMA}}", "nocturno")
-    _fill_depositos_eps(doc, resultados)                        # Cap 5.3
+    # NOTA: Las tablas de sector (MEDIA, MAXIMA, MINIMA, DEPOSITOS)
+    # se rellenan en replicar_sectores() con datos de cada sector individual
 
     # Capítulo 6 — Indicadores
     _fill_indicadores_presion(doc, resultados, datos_sectores)  # Cap 6.2
@@ -880,3 +882,50 @@ def rellenar_tablas(doc, datos_muni, datos_sectores, resultados):
 
 
     logger.info("Tablas rellenadas correctamente.")
+
+
+def rellenar_tabla_sector(doc, sector_data, sector_id, resultados, marker_suffix):
+    """Rellena las tablas de un sector individual (dentro de un bloque clonado).
+
+    Se llama desde replicar_sectores() para cada sector.
+    marker_suffix es el número de sector (1, 2, 3...) que se añadió al clonar.
+    """
+    por_sector = resultados.get("por_sector", {})
+    datos = por_sector.get(sector_id, {})
+    nombre = sector_data.get("nombre_sector", "")
+
+    # Tabla de resultados media
+    for escenario, marker_base in [("media", "MEDIA"), ("punta", "MAXIMA"), ("nocturno", "MINIMA")]:
+        marker = f"{{{{TABLA_SECTOR_{marker_suffix}_{marker_base}}}}}"
+        table = _find_table_by_marker(doc, marker)
+        if not table:
+            continue
+        _clear_data_rows(table)
+        esc_datos = datos.get(escenario, {})
+        _add_row(table, [
+            nombre,
+            _safe_get(esc_datos, "presion_minima"),
+            _safe_get(esc_datos, "presion_media"),
+            _safe_get(esc_datos, "presion_maxima"),
+            _safe_get(esc_datos, "velocidad_media"),
+            _safe_get(esc_datos, "velocidad_maxima"),
+            _safe_get(esc_datos, "pct_baja_vel"),
+        ])
+
+    # Tabla de depósitos
+    marker = f"{{{{TABLA_SECTOR_{marker_suffix}_DEPOSITOS}}}}"
+    table = _find_table_by_marker(doc, marker)
+    if table:
+        _clear_data_rows(table)
+        for d in resultados.get("depositos_eps", []):
+            if d.get("sector") == nombre:
+                nivel_min = float(_safe_get(d, "nivel_minimo", 0) or 0)
+                alcanza_min = "Sí" if nivel_min <= 0.5 else "No"
+                _add_row(table, [
+                    _safe_get(d, "deposito"),
+                    _safe_get(d, "nivel_medio"),
+                    _safe_get(d, "nivel_minimo"),
+                    _safe_get(d, "nivel_maximo"),
+                    "",  # Nº ciclos
+                    alcanza_min,
+                ])

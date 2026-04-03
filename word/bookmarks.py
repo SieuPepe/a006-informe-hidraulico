@@ -96,19 +96,26 @@ def _get_run_properties_from_bookmark(bm_start):
     return None
 
 
-def _create_run(text, rpr=None):
-    """Crea un elemento <w:r><w:t>text</w:t></w:r> con formato opcional."""
-    r = etree.SubElement(etree.Element("dummy"), f"{{{NS_W}}}r")
-    r.getparent().remove(r)  # Crear elemento suelto
+def _create_runs(text, rpr=None):
+    """Crea una lista de elementos <w:r> a partir de texto con saltos de línea.
 
-    if rpr is not None:
-        r.append(deepcopy(rpr))
-
-    t = etree.SubElement(r, f"{{{NS_W}}}t")
-    t.text = text
-    # Preservar espacios en blanco
-    t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-    return r
+    Si el texto contiene \\n, se generan múltiples runs con <w:br/> entre ellos.
+    """
+    runs = []
+    lines = text.split('\n')
+    for i, line in enumerate(lines):
+        r = etree.SubElement(etree.Element("dummy"), f"{{{NS_W}}}r")
+        r.getparent().remove(r)
+        if rpr is not None:
+            r.append(deepcopy(rpr))
+        # Añadir salto de línea antes de cada línea excepto la primera
+        if i > 0:
+            etree.SubElement(r, f"{{{NS_W}}}br")
+        t = etree.SubElement(r, f"{{{NS_W}}}t")
+        t.text = line
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        runs.append(r)
+    return runs
 
 
 def _insert_text_at_bookmark(bm_start, text):
@@ -142,13 +149,12 @@ def _insert_text_at_bookmark(bm_start, text):
         _remove_content_between(bm_start, bm_end)
 
     # Insertar nuevos runs despues del bookmarkStart
-    # Dividir por lineas para respetar saltos de parrafo dentro del texto
-    # (para simplificar, insertamos todo en un unico run)
-    new_run = _create_run(text, rpr)
+    new_runs = _create_runs(text, rpr)
 
     # Insertar justo despues del bookmarkStart
     bm_index = list(parent).index(bm_start)
-    parent.insert(bm_index + 1, new_run)
+    for j, run in enumerate(new_runs):
+        parent.insert(bm_index + 1 + j, run)
 
     return True
 

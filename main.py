@@ -26,6 +26,7 @@ CAMPOS_MANUALES = [
     ("abonados_domesticos", "Número de abonados domésticos"),
     ("factores_estacionales", "Factores estacionales (texto breve)"),
     ("periodo_demanda", "Periodo de referencia de demanda (ej: 16/03/2025-23/03/2025)"),
+    ("etap", "Estación de tratamiento (ETAP) — nombre y descripción breve"),
 ]
 
 

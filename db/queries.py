@@ -143,6 +143,9 @@ def get_datos_municipio(muni_id, sector_ids):
     # Rugosidades
     rugosidades = get_rugosidades(sector_ids)
 
+    # Reglas de operación
+    reglas = get_reglas(sector_ids)
+
     # Demandas por sector
     demandas_sector = get_demandas_por_sector(sector_ids)
 
@@ -174,6 +177,7 @@ def get_datos_municipio(muni_id, sector_ids):
         "materiales_primaria": materiales_primaria,
         "materiales_secundaria": materiales_secundaria,
         "rugosidades": rugosidades,
+        "reglas": reglas,
         "demandas_sector": demandas_sector,
         "demanda_media_ls": round(demanda_total_ls, 3),
         "demanda_media_m3ano": round(demanda_total_ls * 86.4 * 365, 0),
@@ -214,21 +218,26 @@ def get_datos_sectores(sector_ids):
     for s in sectores:
         sid = s['sector_id']
         s['depositos'] = execute_query("""
-            SELECT n.code, COALESCE(n.descript, n.code) AS nombre,
+            SELECT n.code,
+                COALESCE(mt.name, n.descript, n.code) AS nombre,
                 ROUND(COALESCE(mt.elev_fondo, n.elevation)::numeric, 2) AS cota_solera,
                 ROUND((COALESCE(mt.elev_fondo, n.elevation) + COALESCE(mt.hmax, 0))::numeric, 2) AS cota_rebose,
-                COALESCE(mt.vutil, mt.vmax, 0) AS volumen_m3
+                ROUND((COALESCE(mt.elev_fondo, n.elevation) + COALESCE(it.minlevel, 0))::numeric, 2) AS cota_minima,
+                ROUND((COALESCE(mt.elev_fondo, n.elevation) + COALESCE(it.maxlevel, mt.hmax, 0))::numeric, 2) AS cota_maxima,
+                ROUND(COALESCE(mt.vutil, mt.vmax, 0)::numeric, 0) AS volumen_m3
             FROM node n
             LEFT JOIN man_tank mt ON mt.node_id = n.node_id
+            LEFT JOIN inp_tank it ON it.node_id = n.node_id
             WHERE n.sector_id = %s AND n.state = 1 AND n.epa_type = 'TANK'
             ORDER BY n.code
         """, (sid,))
         s['fuentes'] = execute_query("""
-            SELECT code, COALESCE(descript, code) AS nombre,
-                ROUND(elevation::numeric, 2) AS cota_toma
-            FROM node
-            WHERE sector_id = %s AND state = 1 AND epa_type = 'RESERVOIR'
-            ORDER BY code
+            SELECT n.code, COALESCE(ms.name, n.descript, n.code) AS nombre,
+                ROUND(n.elevation::numeric, 2) AS cota_toma
+            FROM node n
+            LEFT JOIN man_source ms ON ms.node_id = n.node_id
+            WHERE n.sector_id = %s AND n.state = 1 AND n.epa_type = 'RESERVOIR'
+            ORDER BY n.code
         """, (sid,))
         s['bombas'] = execute_query("""
             SELECT code, COALESCE(descript, code) AS nombre
@@ -237,11 +246,14 @@ def get_datos_sectores(sector_ids):
             ORDER BY code
         """, (sid,))
         s['vrp'] = execute_query("""
-            SELECT code, COALESCE(descript, code) AS nombre
-            FROM node
-            WHERE sector_id = %s AND state = 1
-              AND epa_type IN ('PRV', 'VALVE')
-            ORDER BY code
+            SELECT n.code, COALESCE(n.descript, n.code) AS nombre,
+                COALESCE(iv.custom_dint, iv.cat_dint) AS diametro_mm,
+                iv.pressure AS presion_consigna
+            FROM node n
+            LEFT JOIN v_edit_inp_valve iv ON iv.node_id = n.node_id
+            WHERE n.sector_id = %s AND n.state = 1
+              AND n.epa_type IN ('PRV', 'VALVE')
+            ORDER BY n.code
         """, (sid,))
     return sectores
 
@@ -253,8 +265,7 @@ def get_datos_sectores(sector_ids):
 def get_materiales_red(sector_ids, nivel='primaria'):
     """Composición de la red por material para un nivel funcional."""
     ph = ','.join(['%s'] * len(sector_ids))
-    # feature_type en arc indica el tipo funcional (CONDUIT, PIPE, etc.)
-    # material y diámetro están en cat_arc vía arccat_id
+    cat_type = 'PR' if nivel == 'primaria' else 'SC'
     return execute_query(f"""
         SELECT
             ca.matcat_id AS material,
@@ -265,9 +276,10 @@ def get_materiales_red(sector_ids, nivel='primaria'):
         FROM v_edit_arc a
         JOIN cat_arc ca ON ca.id = a.arccat_id
         WHERE a.sector_id IN ({ph}) AND a.state = 1
+          AND a.category_type = %s
         GROUP BY ca.matcat_id
         ORDER BY longitud_m DESC
-    """, list(sector_ids))
+    """, list(sector_ids) + [cat_type])
 
 
 def get_rugosidades(sector_ids):
@@ -284,6 +296,17 @@ def get_rugosidades(sector_ids):
         WHERE a.sector_id IN ({ph}) AND a.state = 1
           AND r.period_id = 'Default'
         ORDER BY r.roughness DESC
+    """, sector_ids)
+
+
+def get_reglas(sector_ids):
+    """Reglas de operación desde v_edit_inp_rules."""
+    ph = ','.join(['%s'] * len(sector_ids))
+    return execute_query(f"""
+        SELECT id, sector_id, text
+        FROM v_edit_inp_rules
+        WHERE sector_id IN ({ph}) AND active IS TRUE
+        ORDER BY id
     """, sector_ids)
 
 
