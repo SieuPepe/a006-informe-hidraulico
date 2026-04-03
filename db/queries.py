@@ -103,7 +103,7 @@ def get_datos_municipio(muni_id, sector_ids):
     # Depósitos
     dep = execute_query(f"""
         SELECT COUNT(*) AS n,
-               COALESCE(ROUND(SUM(COALESCE(vol_max, 0))::numeric, 0), 0) AS vol
+               0 AS vol
         FROM node
         WHERE sector_id IN ({ph}) AND state = 1 AND epa_type = 'TANK'
     """, sector_ids)
@@ -215,8 +215,8 @@ def get_datos_sectores(sector_ids):
         s['depositos'] = execute_query("""
             SELECT code, COALESCE(label, code) AS nombre,
                 ROUND(elevation::numeric, 2) AS cota_solera,
-                ROUND(COALESCE(top_elev, elevation)::numeric, 2) AS cota_rebose,
-                ROUND(COALESCE(vol_max, 0)::numeric, 0) AS volumen_m3
+                ROUND(COALESCE(elevation, elevation)::numeric, 2) AS cota_rebose,
+                0 AS volumen_m3
             FROM node
             WHERE sector_id = %s AND state = 1 AND epa_type = 'TANK'
             ORDER BY code
@@ -442,14 +442,14 @@ def get_depositos_eps(result_id, sector_ids):
             ROUND(MIN(rn.head - n.elevation)::numeric, 2) AS nivel_minimo,
             ROUND(MAX(rn.head - n.elevation)::numeric, 2) AS nivel_maximo,
             ROUND(AVG(rn.head - n.elevation)::numeric, 2) AS nivel_medio,
-            ROUND(COALESCE(n.vol_max, 0)::numeric, 0) AS volumen_util_m3
+            0 AS volumen_util_m3
         FROM rpt_node rn
         JOIN node n ON n.node_id = rn.node_id
         JOIN sector s ON s.sector_id = n.sector_id
         WHERE rn.result_id = %s
           AND n.sector_id IN ({ph})
           AND n.epa_type = 'TANK'
-        GROUP BY n.code, s.name, n.elevation, n.vol_max
+        GROUP BY n.code, s.name, n.elevation
         ORDER BY s.name, n.code
     """, [result_id] + list(sector_ids))
 
