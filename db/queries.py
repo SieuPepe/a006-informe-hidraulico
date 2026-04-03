@@ -72,7 +72,7 @@ def get_datos_municipio(muni_id, sector_ids):
     # Longitudes y conteo de arcos
     long_data = execute_query(f"""
         SELECT
-            ROUND(SUM(gis_length) / 1000.0, 2) AS longitud_total_km,
+            ROUND(SUM(_sys_length) / 1000.0, 2) AS longitud_total_km,
             COUNT(*) AS num_arcos
         FROM arc
         WHERE sector_id IN ({ph}) AND state = 1
@@ -80,7 +80,7 @@ def get_datos_municipio(muni_id, sector_ids):
 
     # Longitud por nivel funcional — adaptar a la codificación real del GIS
     long_prim = execute_scalar(f"""
-        SELECT ROUND(SUM(gis_length) / 1000.0, 2)
+        SELECT ROUND(SUM(_sys_length) / 1000.0, 2)
         FROM arc
         WHERE sector_id IN ({ph}) AND state = 1
           AND (cat_feature_id ILIKE '%%primary%%'
@@ -193,7 +193,7 @@ def get_datos_sectores(sector_ids):
             s.sector_id,
             s.name AS nombre_sector,
             COUNT(DISTINCT a.arc_id) AS num_arcos,
-            ROUND(SUM(a.gis_length) / 1000.0, 2) AS longitud_km,
+            ROUND(SUM(a._sys_length) / 1000.0, 2) AS longitud_km,
             COUNT(DISTINCT CASE WHEN n.epa_type = 'JUNCTION' THEN n.node_id END) AS num_nodos,
             COUNT(DISTINCT CASE WHEN n.epa_type = 'TANK'     THEN n.node_id END) AS num_depositos,
             COUNT(DISTINCT CASE WHEN n.epa_type = 'PUMP'     THEN n.node_id END) AS num_bombas,
@@ -258,9 +258,9 @@ def get_materiales_red(sector_ids, nivel='primaria'):
         SELECT
             a.matcat_id AS material,
             CONCAT(MIN(a.dnom)::text, ' - ', MAX(a.dnom)::text) AS rango_diametros_mm,
-            ROUND(SUM(a.gis_length)::numeric, 0) AS longitud_m,
-            ROUND(100.0 * SUM(a.gis_length) /
-                NULLIF(SUM(SUM(a.gis_length)) OVER (), 0), 1) AS pct_total
+            ROUND(SUM(a._sys_length)::numeric, 0) AS longitud_m,
+            ROUND(100.0 * SUM(a._sys_length) /
+                NULLIF(SUM(SUM(a._sys_length)) OVER (), 0), 1) AS pct_total
         FROM arc a
         WHERE a.sector_id IN ({ph}) AND a.state = 1
           AND a.cat_feature_id ILIKE %s
@@ -459,11 +459,11 @@ def get_indicadores_retencion(result_id, sector_ids, timestep_media):
         SELECT
             a.sector_id,
             s.name AS nombre_sector,
-            ROUND(SUM(PI() * POWER(a.dnom / 1000.0 / 2.0, 2) * a.gis_length)::numeric, 2)
+            ROUND(SUM(PI() * POWER(a.dnom / 1000.0 / 2.0, 2) * a._sys_length)::numeric, 2)
                 AS volumen_red_m3,
             ROUND(AVG(ABS(ra.flow))::numeric, 3) AS caudal_medio_ls,
             ROUND(
-                (SUM(PI() * POWER(a.dnom / 1000.0 / 2.0, 2) * a.gis_length)
+                (SUM(PI() * POWER(a.dnom / 1000.0 / 2.0, 2) * a._sys_length)
                  / NULLIF(AVG(ABS(ra.flow)) / 1000.0, 0) / 3600.0)::numeric, 1
             ) AS tiempo_retencion_red_h
         FROM rpt_arc ra
