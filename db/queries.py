@@ -83,7 +83,7 @@ def get_datos_municipio(muni_id, sector_ids):
         SELECT ROUND(SUM(gis_length) / 1000.0, 2)
         FROM v_edit_arc
         WHERE sector_id IN ({ph}) AND state = 1
-          AND category_type ILIKE '%%primaria%%'
+          AND category_type = 'PR'
     """, sector_ids) or 0
 
     # Nodos
