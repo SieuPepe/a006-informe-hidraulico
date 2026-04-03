@@ -5,7 +5,11 @@ Localiza las tablas mediante marcadores ocultos {{TABLA_XXX}} en la primera
 celda del encabezado, elimina las filas de datos vacías existentes y añade
 las filas con los datos reales extraídos de la base de datos.
 """
+from __future__ import annotations
+
 import logging
+from typing import Any
+
 from lxml import etree
 
 logger = logging.getLogger(__name__)
@@ -17,10 +21,12 @@ NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 # Utilidades para localizar y manipular tablas
 # ─────────────────────────────────────────────────────────────
 
-def _find_table_by_marker(doc, marker):
+def _find_table_by_marker(doc, marker: str):
     """Busca una tabla cuyo XML contenga el texto del marcador.
 
     El marcador puede estar en texto oculto (vanish) dentro de cualquier celda.
+    Recorre todas las tablas y comprueba el XML crudo para detectar marcadores
+    con formato <w:vanish/>.
     """
     for table in doc.tables:
         xml = etree.tostring(table._tbl, encoding="unicode")
@@ -29,7 +35,7 @@ def _find_table_by_marker(doc, marker):
     return None
 
 
-def _clear_data_rows(table, header_rows=1):
+def _clear_data_rows(table, header_rows: int = 1) -> None:
     """Elimina todas las filas de datos (excepto las de encabezado)."""
     tbl = table._tbl
     rows = tbl.findall(f"{{{NS_W}}}tr")
@@ -37,32 +43,32 @@ def _clear_data_rows(table, header_rows=1):
         tbl.remove(row)
 
 
-def _add_row(table, values, copy_format_from=None):
-    """Añade una fila a la tabla con los valores proporcionados.
-
-    Si copy_format_from es un índice de fila, copia el formato de esa fila.
-    """
+def _add_row(table, values) -> None:
+    """Añade una fila a la tabla con los valores proporcionados."""
     row = table.add_row()
     for i, val in enumerate(values):
         if i < len(row.cells):
             row.cells[i].text = _fmt(val)
-    return row
 
 
-def _fmt(value):
+def _fmt(value: Any) -> str:
     """Formatea un valor para insertar en una celda de tabla."""
     if value is None:
-        return ""
+        return "—"
+    if isinstance(value, bool):
+        return "Sí" if value else "No"
     if isinstance(value, float):
-        if value == int(value):
+        if value == int(value) and abs(value) < 1e12:
             return str(int(value))
         return f"{value:g}".replace(".", ",")
     return str(value)
 
 
-def _safe_get(d, key, default=""):
+def _safe_get(d, key: str, default: Any = "") -> Any:
     """Obtiene un valor de un dict con valor por defecto."""
-    val = d.get(key) if d else None
+    if not isinstance(d, dict):
+        return default
+    val = d.get(key)
     return val if val is not None else default
 
 
@@ -70,48 +76,112 @@ def _safe_get(d, key, default=""):
 # Clasificación por umbrales
 # ─────────────────────────────────────────────────────────────
 
-def _clasificar_presion(p_min_punta, p_max_nocturno):
-    """Clasifica el estado de presión de un sector."""
-    p_min = float(p_min_punta) if p_min_punta else 999
-    p_max = float(p_max_nocturno) if p_max_nocturno else 0
-    if p_min < 5 or p_max > 60:
-        return "Crítico"
-    if p_min < 10 or p_max > 50:
-        return "Deficiente"
-    if p_min < 20 or p_max > 40:
-        return "Aceptable"
-    return "Óptimo"
+_CLASIF_ORDER = {"Óptimo": 0, "Aceptable": 1, "Deficiente": 2, "Crítico": 3, "Sin datos": 4}
 
 
-def _clasificar_velocidad(vel_media):
-    """Clasifica el estado de velocidad de un sector."""
-    v = float(vel_media) if vel_media else 0
-    if v > 1.5:
+def _peor(a: str, b: str) -> str:
+    """Devuelve la peor de dos clasificaciones."""
+    return a if _CLASIF_ORDER.get(a, 4) >= _CLASIF_ORDER.get(b, 4) else b
+
+
+def _clasificar_presion(p_min_punta, p_max_nocturno) -> str:
+    """Clasifica el estado de presión de un sector.
+
+    Umbrales (m.c.a.):
+        Óptimo:      20 <= p_min  y  p_max <= 40
+        Aceptable:   10 <= p_min < 20  o  40 < p_max <= 50
+        Deficiente:   5 <= p_min < 10  o  50 < p_max <= 60
+        Crítico:      p_min < 5  o  p_max > 60
+    """
+    try:
+        p_min = float(p_min_punta) if p_min_punta not in (None, "", "—") else None
+        p_max = float(p_max_nocturno) if p_max_nocturno not in (None, "", "—") else None
+    except (TypeError, ValueError):
+        return "Sin datos"
+
+    if p_min is None and p_max is None:
+        return "Sin datos"
+
+    clasif = "Óptimo"
+    if p_min is not None:
+        if p_min < 5:
+            clasif = _peor(clasif, "Crítico")
+        elif p_min < 10:
+            clasif = _peor(clasif, "Deficiente")
+        elif p_min < 20:
+            clasif = _peor(clasif, "Aceptable")
+
+    if p_max is not None:
+        if p_max > 60:
+            clasif = _peor(clasif, "Crítico")
+        elif p_max > 50:
+            clasif = _peor(clasif, "Deficiente")
+        elif p_max > 40:
+            clasif = _peor(clasif, "Aceptable")
+
+    return clasif
+
+
+def _clasificar_velocidad(vel_media, vel_max=None) -> str:
+    """Clasifica el estado de velocidad de un sector.
+
+    Umbrales (m/s):
+        Óptimo:      0,30 <= v_media <= 1,00
+        Aceptable:   0,05 <= v_media < 0,30
+        Deficiente:  v_media < 0,05
+        Crítico:     v_max > 1,50
+    """
+    try:
+        v = float(vel_media) if vel_media not in (None, "", "—") else None
+        vx = float(vel_max) if vel_max not in (None, "", "—") else None
+    except (TypeError, ValueError):
+        return "Sin datos"
+
+    if v is None:
+        return "Sin datos"
+
+    if vx is not None and vx > 1.5:
         return "Crítico"
     if v < 0.05:
         return "Deficiente"
     if v < 0.30:
         return "Aceptable"
-    return "Óptimo"
+    if v <= 1.00:
+        return "Óptimo"
+    return "Deficiente"
 
 
-def _clasificar_retencion(t_ret_h):
-    """Clasifica el tiempo de retención."""
-    t = float(t_ret_h) if t_ret_h else 0
-    if t > 144:
-        return "Crítico"
-    if t > 72:
-        return "Deficiente"
-    if t > 24:
+def _clasificar_retencion(t_ret_h) -> str:
+    """Clasifica el tiempo de retención.
+
+    Umbrales (horas):
+        Óptimo:     t <= 24
+        Aceptable:  24 < t <= 72
+        Deficiente: 72 < t <= 144
+        Crítico:    t > 144
+    """
+    try:
+        t = float(t_ret_h) if t_ret_h not in (None, "", "—") else None
+    except (TypeError, ValueError):
+        return "Sin datos"
+
+    if t is None:
+        return "Sin datos"
+    if t <= 24:
+        return "Óptimo"
+    if t <= 72:
         return "Aceptable"
-    return "Óptimo"
+    if t <= 144:
+        return "Deficiente"
+    return "Crítico"
 
 
-def _clasificar_global(*clasificaciones):
+def _clasificar_global(*clasificaciones: str) -> str:
     """Devuelve la peor clasificación de las proporcionadas."""
-    orden = {"Crítico": 0, "Deficiente": 1, "Aceptable": 2, "Óptimo": 3}
-    peor = min(clasificaciones, key=lambda c: orden.get(c, 3))
-    return peor
+    result = "Óptimo"
+    for c in clasificaciones:
+        result = _peor(result, c)
+    return result
 
 
 # ─────────────────────────────────────────────────────────────
@@ -119,41 +189,63 @@ def _clasificar_global(*clasificaciones):
 # ─────────────────────────────────────────────────────────────
 
 def _fill_fuentes(doc, datos_sectores):
-    """TABLA_FUENTES — Fuentes de suministro."""
+    """TABLA_FUENTES — Fuentes de suministro (Cap 2.3).
+
+    Columnas: Nombre | Tipo | Caudal concesional (m³/año) |
+              Caudal medio registrado (m³/año) | Punto de entrega al sistema
+    """
     table = _find_table_by_marker(doc, "{{TABLA_FUENTES}}")
     if not table:
         logger.warning("Tabla TABLA_FUENTES no encontrada.")
         return
-    _clear_data_rows(table)
+    fuentes = []
     for sector in datos_sectores:
         for f in sector.get("fuentes", []):
-            _add_row(table, [
-                _safe_get(f, "nombre"),
-                "Reservorio",
-                "",  # Caudal concesional
-                "",  # Caudal medio
-                _safe_get(f, "cota_toma"),
-            ])
+            f_copy = dict(f)
+            f_copy["_sector"] = sector.get("nombre_sector", "")
+            fuentes.append(f_copy)
+    if not fuentes:
+        return
+    _clear_data_rows(table)
+    for f in fuentes:
+        _add_row(table, [
+            _safe_get(f, "nombre", _safe_get(f, "code")),
+            _safe_get(f, "tipo", "Captación"),
+            _safe_get(f, "caudal_concesional"),
+            _safe_get(f, "caudal_medio"),
+            _safe_get(f, "punto_entrega", f.get("_sector", "")),
+        ])
 
 
 def _fill_depositos(doc, datos_sectores):
-    """TABLA_DEPOSITOS — Inventario de depósitos."""
+    """TABLA_DEPOSITOS — Inventario de depósitos (Cap 2.4).
+
+    Columnas: Nombre | Cota de solera (msnm) | Cota de rebose (msnm) |
+              Volumen útil (m³) | Función | Alimentación | Zonas abastecidas
+    """
     table = _find_table_by_marker(doc, "{{TABLA_DEPOSITOS}}")
     if not table:
         logger.warning("Tabla TABLA_DEPOSITOS no encontrada.")
         return
-    _clear_data_rows(table)
+    depositos = []
     for sector in datos_sectores:
         for d in sector.get("depositos", []):
-            _add_row(table, [
-                _safe_get(d, "nombre"),
-                _safe_get(d, "cota_solera"),
-                _safe_get(d, "cota_rebose"),
-                _safe_get(d, "volumen_m3"),
-                "",  # Función
-                "",  # Alimentación
-                sector.get("nombre_sector", ""),
-            ])
+            d_copy = dict(d)
+            d_copy["_sector"] = sector.get("nombre_sector", "")
+            depositos.append(d_copy)
+    if not depositos:
+        return
+    _clear_data_rows(table)
+    for d in depositos:
+        _add_row(table, [
+            _safe_get(d, "nombre", _safe_get(d, "code")),
+            _safe_get(d, "cota_solera"),
+            _safe_get(d, "cota_rebose"),
+            _safe_get(d, "volumen_m3"),
+            _safe_get(d, "funcion", "Regulación"),
+            _safe_get(d, "alimentacion"),
+            d.get("_sector", ""),
+        ])
 
 
 def _fill_red_materiales(doc, datos_muni, nivel):
@@ -175,59 +267,111 @@ def _fill_red_materiales(doc, datos_muni, nivel):
 
 
 def _fill_bombeos(doc, datos_sectores):
-    """TABLA_BOMBEOS — Estaciones de bombeo."""
+    """TABLA_BOMBEOS — Estaciones de bombeo (Cap 2.6).
+
+    Columnas: Nombre | Ubicación | Nº grupos | Caudal nominal (l/s) |
+              Altura manométrica (m.c.a.) | Potencia instalada (kW) |
+              Depósito de aspiración | Depósito de impulsión
+    """
     table = _find_table_by_marker(doc, "{{TABLA_BOMBEOS}}")
     if not table:
         logger.warning("Tabla TABLA_BOMBEOS no encontrada.")
         return
-    _clear_data_rows(table)
+    bombas = []
     for sector in datos_sectores:
         for b in sector.get("bombas", []):
-            _add_row(table, [
-                _safe_get(b, "nombre"),
-                sector.get("nombre_sector", ""),
-                "",  # Nº grupos
-                "",  # Caudal nominal
-                "",  # Altura manométrica
-                "",  # Potencia
-                "",  # Depósito aspiración
-                "",  # Depósito impulsión
-            ])
+            b_copy = dict(b)
+            b_copy["_sector"] = sector.get("nombre_sector", "")
+            bombas.append(b_copy)
+    if not bombas:
+        return
+    _clear_data_rows(table)
+    for b in bombas:
+        _add_row(table, [
+            _safe_get(b, "nombre", _safe_get(b, "code")),
+            _safe_get(b, "ubicacion", b.get("_sector", "")),
+            _safe_get(b, "num_grupos", 1),
+            _safe_get(b, "caudal_nominal"),
+            _safe_get(b, "altura_manometrica"),
+            _safe_get(b, "potencia_kw"),
+            _safe_get(b, "deposito_aspiracion"),
+            _safe_get(b, "deposito_impulsion"),
+        ])
 
 
-def _fill_grupos_presion(doc, datos_sectores):
-    """TABLA_GRUPOS_PRESION — Grupos de presión."""
+def _fill_grupos_presion(doc, datos_muni, datos_sectores):
+    """TABLA_GRUPOS_PRESION — Grupos de presión (Cap 2.6).
+
+    Columnas: Nombre | Ubicación | Nº grupos | Presión de consigna (m.c.a.) |
+              Caudal máximo (l/s) | Potencia instalada (kW) | Zona abastecida
+    """
     table = _find_table_by_marker(doc, "{{TABLA_GRUPOS_PRESION}}")
     if not table:
         logger.warning("Tabla TABLA_GRUPOS_PRESION no encontrada.")
         return
+    grupos = datos_muni.get("grupos_presion", [])
+    if not grupos:
+        for sector in datos_sectores:
+            for g in sector.get("grupos_presion", []):
+                g_copy = dict(g)
+                g_copy["_sector"] = sector.get("nombre_sector", "")
+                grupos.append(g_copy)
+    if not grupos:
+        return
     _clear_data_rows(table)
-    # Los grupos de presión se rellenarán manualmente o con datos adicionales
+    for g in grupos:
+        _add_row(table, [
+            _safe_get(g, "nombre", _safe_get(g, "code")),
+            _safe_get(g, "ubicacion"),
+            _safe_get(g, "num_grupos", 1),
+            _safe_get(g, "presion_consigna"),
+            _safe_get(g, "caudal_maximo"),
+            _safe_get(g, "potencia_kw"),
+            _safe_get(g, "zona_abastecida", g.get("_sector", "")),
+        ])
 
 
 def _fill_vrp(doc, datos_sectores):
-    """TABLA_VRP — Válvulas reductoras de presión."""
+    """TABLA_VRP — Válvulas reductoras de presión (Cap 2.6).
+
+    Columnas: Nombre | Ubicación | Diámetro (mm) |
+              Presión de consigna aguas abajo (m.c.a.) | Zona abastecida
+    """
     table = _find_table_by_marker(doc, "{{TABLA_VRP}}")
     if not table:
         logger.warning("Tabla TABLA_VRP no encontrada.")
         return
-    _clear_data_rows(table)
+    vrps = []
     for sector in datos_sectores:
         for v in sector.get("vrp", []):
-            _add_row(table, [
-                _safe_get(v, "nombre"),
-                sector.get("nombre_sector", ""),
-                "",  # Diámetro
-                "",  # Presión consigna
-                sector.get("nombre_sector", ""),
-            ])
+            v_copy = dict(v)
+            v_copy["_sector"] = sector.get("nombre_sector", "")
+            vrps.append(v_copy)
+    if not vrps:
+        return
+    _clear_data_rows(table)
+    for v in vrps:
+        _add_row(table, [
+            _safe_get(v, "nombre", _safe_get(v, "code")),
+            _safe_get(v, "ubicacion", v.get("_sector", "")),
+            _safe_get(v, "diametro_mm"),
+            _safe_get(v, "presion_consigna"),
+            v.get("_sector", ""),
+        ])
 
 
 def _fill_sectores(doc, datos_sectores):
-    """TABLA_SECTORES — Sectores hidráulicos."""
+    """TABLA_SECTORES — Sectores hidráulicos (Cap 2.7).
+
+    Columnas: Sector | Punto de alimentación | Tipo de alimentación |
+              Cota mínima servida (msnm) | Cota máxima servida (msnm) |
+              Presión estática máxima estimada (m.c.a.)
+    """
     table = _find_table_by_marker(doc, "{{TABLA_SECTORES}}")
     if not table:
         logger.warning("Tabla TABLA_SECTORES no encontrada.")
+        return
+    if not datos_sectores:
         return
     _clear_data_rows(table)
     for s in datos_sectores:
@@ -235,23 +379,26 @@ def _fill_sectores(doc, datos_sectores):
         cota_alim = 0
         depositos = s.get("depositos", [])
         if depositos:
-            cota_alim = max(float(_safe_get(d, "cota_rebose", 0)) for d in depositos)
-        cota_min = float(_safe_get(s, "cota_min", 0))
-        presion_est = round((cota_alim - cota_min) * 10, 1) if cota_alim > 0 else ""
+            cotas_rebose = [float(_safe_get(d, "cota_rebose", 0) or 0)
+                           for d in depositos]
+            cota_alim = max(cotas_rebose) if cotas_rebose else 0
+        cota_min = float(_safe_get(s, "cota_min", 0) or 0)
+        presion_est = round(cota_alim - cota_min, 1) if cota_alim > 0 else ""
 
         # Punto de alimentación
-        punto_alim = ""
-        tipo_alim = ""
-        if depositos:
-            punto_alim = depositos[0].get("nombre", "")
-            tipo_alim = "Depósito"
-        fuentes = s.get("fuentes", [])
-        if fuentes:
-            punto_alim = fuentes[0].get("nombre", "")
-            tipo_alim = "Reservorio"
+        punto_alim = _safe_get(s, "punto_alimentacion")
+        tipo_alim = _safe_get(s, "tipo_alimentacion")
+        if not punto_alim:
+            if depositos:
+                punto_alim = depositos[0].get("nombre", depositos[0].get("code", ""))
+                tipo_alim = tipo_alim or "Gravedad"
+            fuentes = s.get("fuentes", [])
+            if fuentes:
+                punto_alim = fuentes[0].get("nombre", fuentes[0].get("code", ""))
+                tipo_alim = tipo_alim or "Gravedad"
 
         _add_row(table, [
-            _safe_get(s, "nombre_sector"),
+            _safe_get(s, "nombre_sector", _safe_get(s, "sector_id")),
             punto_alim,
             tipo_alim,
             _safe_get(s, "cota_min"),
@@ -260,8 +407,33 @@ def _fill_sectores(doc, datos_sectores):
         ])
 
 
+def _fill_reglas(doc, datos_muni):
+    """TABLA_REGLAS — Reglas de operación (Cap 2.8).
+
+    Columnas: ID regla | Elemento controlado | Tipo de elemento |
+              Condición de activación | Acción | Depósito asociado
+    """
+    table = _find_table_by_marker(doc, "{{TABLA_REGLAS}}")
+    if not table:
+        logger.warning("Tabla TABLA_REGLAS no encontrada.")
+        return
+    reglas = datos_muni.get("reglas", [])
+    if not reglas:
+        return
+    _clear_data_rows(table)
+    for r in reglas:
+        _add_row(table, [
+            _safe_get(r, "id_regla", _safe_get(r, "id")),
+            _safe_get(r, "elemento_controlado"),
+            _safe_get(r, "tipo_elemento"),
+            _safe_get(r, "condicion", _safe_get(r, "condicion_activacion")),
+            _safe_get(r, "accion"),
+            _safe_get(r, "deposito_asociado"),
+        ])
+
+
 def _fill_elementos_modelo(doc, datos_muni):
-    """TABLA_ELEMENTOS_MODELO — Resumen de elementos del modelo."""
+    """TABLA_ELEMENTOS_MODELO — Resumen de elementos del modelo (Cap 3.3)."""
     table = _find_table_by_marker(doc, "{{TABLA_ELEMENTOS_MODELO}}")
     if not table:
         logger.warning("Tabla TABLA_ELEMENTOS_MODELO no encontrada.")
