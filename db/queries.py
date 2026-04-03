@@ -282,7 +282,7 @@ def get_rugosidades(sector_ids):
         JOIN cat_arc ca ON ca.id = a.arccat_id
         JOIN cat_mat_roughness r ON r.matcat_id = ca.matcat_id
         WHERE a.sector_id IN ({ph}) AND a.state = 1
-          AND r.cur_period_id = 'Default'
+          AND r.period_id = 'Default'
         ORDER BY r.roughness DESC
     """, sector_ids)
 
