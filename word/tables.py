@@ -199,7 +199,7 @@ def _fill_depositos(doc, datos_sectores):
         return
     _clear_data_rows(table)
     for d in depositos:
-        # Cols: Nombre | Cota solera | Cota rebose | Cota mínima | Cota máxima | Volumen | Nº entradas | Nº salidas | Sector
+        # Cols: Nombre | Cota solera | Cota rebose | Cota mínima | Cota máxima | Volumen | Sector
         _add_row(table, [
             _safe_get(d, "nombre", _safe_get(d, "code")),
             _safe_get(d, "cota_solera"),
@@ -207,8 +207,6 @@ def _fill_depositos(doc, datos_sectores):
             _safe_get(d, "cota_minima"),
             _safe_get(d, "cota_maxima"),
             _safe_get(d, "volumen_m3"),
-            "",  # Nº de entradas
-            "",  # Nº de salidas
             d.get("_sector", ""),
         ])
 
@@ -319,11 +317,18 @@ def _fill_vrp(doc, datos_sectores):
         return
     _clear_data_rows(table)
     for v in vrps:
+        # Presión sin decimales
+        presion = _safe_get(v, "presion_consigna")
+        if presion not in (None, ""):
+            try:
+                presion = int(round(float(presion)))
+            except (ValueError, TypeError):
+                pass
         _add_row(table, [
-            _safe_get(v, "code"),  # Nombre = código de la válvula
-            v.get("_sector", ""),  # Ubicación = sector
+            _safe_get(v, "code"),
+            v.get("_sector", ""),
             _safe_get(v, "diametro_mm"),
-            _safe_get(v, "presion_consigna"),
+            presion,
             v.get("_sector", ""),
         ])
 
@@ -343,40 +348,29 @@ def _fill_sectores(doc, datos_sectores):
         return
     _clear_data_rows(table)
     for s in datos_sectores:
-        depositos = s.get("depositos", [])
         fuentes = s.get("fuentes", [])
 
-        # Generar una fila por cada punto de alimentación (fuente o depósito)
-        puntos_alimentacion = []
-        for f in fuentes:
-            puntos_alimentacion.append((
-                _safe_get(f, "nombre", _safe_get(f, "code")),
-                "Gravedad",
-                float(_safe_get(f, "cota_toma", 0) or 0),
-            ))
-        for d in depositos:
-            puntos_alimentacion.append((
-                _safe_get(d, "nombre", _safe_get(d, "code")),
-                "Gravedad",
-                float(_safe_get(d, "cota_rebose", 0) or 0),
-            ))
+        # Punto de alimentación: primera fuente (RESERVOIR) del sector
+        punto_alim = ""
+        tipo_alim = "Gravedad"
+        cota_alim = 0
+        if fuentes:
+            punto_alim = _safe_get(fuentes[0], "nombre", _safe_get(fuentes[0], "code"))
+            cota_alim = float(_safe_get(fuentes[0], "cota_toma", 0) or 0)
 
-        if not puntos_alimentacion:
-            puntos_alimentacion = [("", "", 0)]
+        # Cotas servidas de red secundaria
+        cota_min = float(_safe_get(s, "cota_min_sc", _safe_get(s, "cota_min", 0)) or 0)
+        cota_max = float(_safe_get(s, "cota_max_sc", _safe_get(s, "cota_max", 0)) or 0)
+        presion_est = round(cota_alim - cota_min, 1) if cota_alim > 0 and cota_min > 0 else ""
 
-        cota_min = float(_safe_get(s, "cota_min", 0) or 0)
-        cota_max = float(_safe_get(s, "cota_max", 0) or 0)
-
-        for punto_nombre, tipo, cota_alim in puntos_alimentacion:
-            presion_est = round(cota_alim - cota_min, 1) if cota_alim > 0 and cota_min > 0 else ""
-            _add_row(table, [
-                _safe_get(s, "nombre_sector", _safe_get(s, "sector_id")),
-                punto_nombre,
-                tipo,
-                _safe_get(s, "cota_min"),
-                _safe_get(s, "cota_max"),
-                presion_est,
-            ])
+        _add_row(table, [
+            _safe_get(s, "nombre_sector", _safe_get(s, "sector_id")),
+            punto_alim,
+            tipo_alim,
+            int(cota_min) if cota_min else "",
+            int(cota_max) if cota_max else "",
+            presion_est,
+        ])
 
 
 def _fill_reglas(doc, datos_muni):

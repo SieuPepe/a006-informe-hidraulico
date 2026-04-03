@@ -215,8 +215,24 @@ def get_datos_sectores(sector_ids):
         ORDER BY s.sector_id
     """, sector_ids)
 
+    # Cotas servidas solo de red secundaria (category_type = 'SC')
     for s in sectores:
         sid = s['sector_id']
+        cotas_sc = execute_query("""
+            SELECT ROUND(MIN(n.elevation)::numeric, 0) AS cota_min_sc,
+                   ROUND(MAX(n.elevation)::numeric, 0) AS cota_max_sc
+            FROM node n
+            JOIN v_edit_arc a ON (a.node_1 = n.node_id OR a.node_2 = n.node_id)
+            WHERE a.sector_id = %s AND a.state = 1 AND a.category_type = 'SC'
+              AND n.epa_type = 'JUNCTION' AND n.elevation > 0
+        """, (sid,))
+        if cotas_sc and cotas_sc[0]:
+            s['cota_min_sc'] = cotas_sc[0].get('cota_min_sc')
+            s['cota_max_sc'] = cotas_sc[0].get('cota_max_sc')
+        else:
+            s['cota_min_sc'] = s.get('cota_min')
+            s['cota_max_sc'] = s.get('cota_max')
+
         s['depositos'] = execute_query("""
             SELECT n.code,
                 COALESCE(mt.name, n.descript, n.code) AS nombre,
@@ -408,7 +424,7 @@ def get_autonomia_depositos(result_id, sector_ids):
     ph = ','.join(['%s'] * len(sector_ids))
     return execute_query(f"""
         WITH dep_nivel AS (
-            SELECT n.node_id, n.code AS deposito, s.name AS sector,
+            SELECT n.node_id, COALESCE(mt.name, n.descript, n.code) AS deposito, s.name AS sector,
                 n.sector_id,
                 ROUND(AVG(rn.head - n.elevation)::numeric, 2) AS nivel_medio,
                 COALESCE(mt.vutil, mt.vmax, 0) AS volumen_ref
@@ -578,7 +594,7 @@ def get_depositos_eps(result_id, sector_ids):
     ph = ','.join(['%s'] * len(sector_ids))
     return execute_query(f"""
         SELECT
-            n.code AS deposito,
+            COALESCE(mt.name, n.descript, n.code) AS deposito,
             s.name AS sector,
             ROUND(MIN(rn.head - n.elevation)::numeric, 2) AS nivel_minimo,
             ROUND(MAX(rn.head - n.elevation)::numeric, 2) AS nivel_maximo,
@@ -591,7 +607,7 @@ def get_depositos_eps(result_id, sector_ids):
         WHERE rn.result_id = %s
           AND n.sector_id IN ({ph})
           AND n.epa_type = 'TANK'
-        GROUP BY n.code, s.name, n.elevation, mt.vutil, mt.vmax
+        GROUP BY mt.name, n.descript, n.code, s.name, n.elevation, mt.vutil, mt.vmax
         ORDER BY s.name, n.code
     """, [result_id] + list(sector_ids))
 
