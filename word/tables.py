@@ -584,7 +584,7 @@ def _fill_depositos_eps(doc, resultados):
             _safe_get(d, "nivel_medio"),  # Nivel inicial ≈ nivel medio como aproximación
             _safe_get(d, "nivel_minimo"),
             _safe_get(d, "nivel_maximo"),
-            "",  # Nº ciclos llenado/vaciado - no calculado
+            _safe_get(d, "num_ciclos"),
             alcanza_min,
         ])
 
@@ -872,6 +872,6 @@ def rellenar_tabla_sector(doc, sector_data, sector_id, resultados, marker_suffix
                     _safe_get(d, "nivel_medio"),
                     _safe_get(d, "nivel_minimo"),
                     _safe_get(d, "nivel_maximo"),
-                    "",  # Nº ciclos
+                    _safe_get(d, "num_ciclos"),
                     alcanza_min,
                 ])

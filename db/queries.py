@@ -610,7 +610,7 @@ def get_resultados_por_sector(result_id, sector_ids, timesteps):
 def get_depositos_eps(result_id, sector_ids):
     """Comportamiento de depósitos a lo largo de la EPS."""
     ph = ','.join(['%s'] * len(sector_ids))
-    return execute_query(f"""
+    depositos = execute_query(f"""
         SELECT
             COALESCE(mt.name, n.descript, n.code) AS deposito,
             s.name AS sector,
@@ -628,6 +628,38 @@ def get_depositos_eps(result_id, sector_ids):
         GROUP BY mt.name, n.descript, n.code, s.name, n.elevation, mt.vutil, mt.vmax
         ORDER BY s.name, n.code
     """, [result_id] + list(sector_ids))
+
+    # Calcular ciclos llenado/vaciado por depósito
+    for dep in depositos:
+        dep_name = dep['deposito']
+        # Obtener serie temporal del nivel
+        serie = execute_query(f"""
+            SELECT rn.time, (rn.head - n.elevation) AS nivel
+            FROM rpt_node rn
+            JOIN node n ON n.node_id = rn.node_id
+            LEFT JOIN man_tank mt ON mt.node_id = n.node_id
+            WHERE rn.result_id = %s
+              AND n.epa_type = 'TANK'
+              AND n.sector_id IN ({ph})
+              AND COALESCE(mt.name, n.descript, n.code) = %s
+            ORDER BY rn.id
+        """, [result_id] + list(sector_ids) + [dep_name])
+        # Contar cambios de dirección (subida → bajada = 1 ciclo)
+        ciclos = 0
+        if serie and len(serie) > 2:
+            subiendo = None
+            for i in range(1, len(serie)):
+                nivel_ant = float(serie[i-1]['nivel'] or 0)
+                nivel_act = float(serie[i]['nivel'] or 0)
+                if nivel_act > nivel_ant + 0.01:
+                    if subiendo is False:
+                        ciclos += 1
+                    subiendo = True
+                elif nivel_act < nivel_ant - 0.01:
+                    subiendo = False
+        dep['num_ciclos'] = ciclos
+
+    return depositos
 
 
 def get_indicadores_retencion(result_id, sector_ids, timestep_media):
