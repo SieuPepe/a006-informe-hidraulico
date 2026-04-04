@@ -146,6 +146,15 @@ def get_datos_municipio(muni_id, sector_ids):
     # Reglas de operación
     reglas = get_reglas(sector_ids)
 
+    # Lookup node_id → nombre (para depósitos referenciados en reglas)
+    nombres_nodos_raw = execute_query("""
+        SELECT n.node_id::text AS nid, COALESCE(mt.name, n.descript, n.code) AS nombre
+        FROM node n
+        LEFT JOIN man_tank mt ON mt.node_id = n.node_id
+        WHERE n.epa_type = 'TANK' AND n.state = 1
+    """)
+    nombres_nodos = {r['nid']: r['nombre'] for r in (nombres_nodos_raw or [])}
+
     # Demandas por sector
     demandas_sector = get_demandas_por_sector(sector_ids)
 
@@ -178,6 +187,7 @@ def get_datos_municipio(muni_id, sector_ids):
         "materiales_secundaria": materiales_secundaria,
         "rugosidades": rugosidades,
         "reglas": reglas,
+        "nombres_nodos": nombres_nodos,
         "demandas_sector": demandas_sector,
         "demanda_media_ls": round(demanda_total_ls, 3),
         "demanda_media_m3ano": round(demanda_total_ls * 86.4 * 365, 0),

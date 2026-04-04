@@ -386,6 +386,8 @@ def _fill_reglas(doc, datos_muni):
     reglas = datos_muni.get("reglas", [])
     if not reglas:
         return
+    # Lookup de node_id → nombre de depósito
+    nombres_nodos = datos_muni.get("nombres_nodos", {})
     _clear_data_rows(table)
     rule_num = 0
     for r in reglas:
@@ -404,7 +406,8 @@ def _fill_reglas(doc, datos_muni):
             if "IF" in parts:
                 idx_if = parts.index("IF")
                 condicion = " ".join(parts[idx_if:])
-                deposito = parts[idx_if + 2] if len(parts) > idx_if + 2 else ""
+                node_id = parts[idx_if + 2] if len(parts) > idx_if + 2 else ""
+                deposito = nombres_nodos.get(node_id, node_id)
             _add_row(table, [
                 rule_num,
                 elemento,
