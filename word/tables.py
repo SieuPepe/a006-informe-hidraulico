@@ -388,16 +388,26 @@ def _fill_reglas(doc, datos_muni):
         return
     _clear_data_rows(table)
     for r in reglas:
-        # v_edit_inp_rules tiene: id, sector_id, text
+        # Parsear texto EPANET: "LINK 12860_n2a CLOSED IF NODE 208 ABOVE 2.5"
+        text = _safe_get(r, "text", "")
+        parts = text.split() if text else []
         # Cols: ID Regla | Elemento controlado | Tipo | Condición | Acción | Depósito
-        # El texto completo de la regla va en la columna "Elemento controlado"
+        elemento = parts[1] if len(parts) > 1 else ""
+        tipo = _safe_get(r, "tipo", "Control")
+        accion = parts[2] if len(parts) > 2 else ""
+        # Condición: todo después de "IF"
+        condicion = ""
+        if "IF" in parts:
+            idx_if = parts.index("IF")
+            condicion = " ".join(parts[idx_if:])
+        deposito = parts[idx_if + 2] if "IF" in parts and len(parts) > idx_if + 2 else ""
         _add_row(table, [
             _safe_get(r, "id"),
-            _safe_get(r, "text"),  # Texto completo de la regla EPANET
-            "",  # Tipo
-            "",  # Condición
-            "",  # Acción
-            "",  # Depósito
+            elemento,
+            tipo,
+            condicion,
+            accion,
+            deposito,
         ])
 
 

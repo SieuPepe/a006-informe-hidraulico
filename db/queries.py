@@ -316,18 +316,23 @@ def get_rugosidades(sector_ids):
 
 
 def get_reglas(sector_ids):
-    """Reglas de operación desde v_edit_inp_rules.
+    """Reglas y controles de operación desde Giswater.
 
-    Las reglas se definen sobre nodos (bombas, válvulas), no sobre sectores.
-    Traemos todas las reglas activas sin filtro de sector, ya que el sector_id
-    de la regla puede no coincidir con los sectores hidráulicos.
+    Trae tanto Controls (reglas simples) como Rules (reglas complejas).
     """
-    return execute_query("""
-        SELECT id, sector_id, text
+    controls = execute_query("""
+        SELECT id, sector_id, text, 'Control' AS tipo
+        FROM v_edit_inp_controls
+        WHERE active IS TRUE
+        ORDER BY id
+    """)
+    rules = execute_query("""
+        SELECT id, sector_id, text, 'Rule' AS tipo
         FROM v_edit_inp_rules
         WHERE active IS TRUE
         ORDER BY id
     """)
+    return (controls or []) + (rules or [])
 
 
 def get_demandas_por_sector(sector_ids):
