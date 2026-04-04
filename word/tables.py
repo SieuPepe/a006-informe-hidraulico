@@ -387,27 +387,31 @@ def _fill_reglas(doc, datos_muni):
     if not reglas:
         return
     _clear_data_rows(table)
+    rule_num = 0
     for r in reglas:
-        # Parsear texto EPANET: "LINK 12860_n2a CLOSED IF NODE 208 ABOVE 2.5"
+        # Un registro puede contener múltiples líneas de control
         text = _safe_get(r, "text", "")
-        parts = text.split() if text else []
-        # Cols: ID Regla | Elemento controlado | Tipo | Condición | Acción | Depósito
-        elemento = parts[1] if len(parts) > 1 else ""
         tipo = _safe_get(r, "tipo", "Control")
-        accion = parts[2] if len(parts) > 2 else ""
-        # Condición: todo después de "IF"
-        condicion = ""
-        if "IF" in parts:
-            idx_if = parts.index("IF")
-            condicion = " ".join(parts[idx_if:])
-        deposito = parts[idx_if + 2] if "IF" in parts and len(parts) > idx_if + 2 else ""
-        _add_row(table, [
-            _safe_get(r, "id"),
-            elemento,
-            tipo,
-            condicion,
-            accion,
-            deposito,
+        lines = [l.strip() for l in text.split('\n') if l.strip()] if text else []
+        for line in lines:
+            rule_num += 1
+            parts = line.split()
+            # Formato: LINK 12860_n2a CLOSED IF NODE 208 ABOVE 2.5
+            elemento = parts[1] if len(parts) > 1 else ""
+            accion = parts[2] if len(parts) > 2 else ""
+            condicion = ""
+            deposito = ""
+            if "IF" in parts:
+                idx_if = parts.index("IF")
+                condicion = " ".join(parts[idx_if:])
+                deposito = parts[idx_if + 2] if len(parts) > idx_if + 2 else ""
+            _add_row(table, [
+                rule_num,
+                elemento,
+                tipo,
+                condicion,
+                accion,
+                deposito,
         ])
 
 
