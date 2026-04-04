@@ -316,14 +316,18 @@ def get_rugosidades(sector_ids):
 
 
 def get_reglas(sector_ids):
-    """Reglas de operación desde v_edit_inp_rules."""
-    ph = ','.join(['%s'] * len(sector_ids))
-    return execute_query(f"""
+    """Reglas de operación desde v_edit_inp_rules.
+
+    Las reglas se definen sobre nodos (bombas, válvulas), no sobre sectores.
+    Traemos todas las reglas activas sin filtro de sector, ya que el sector_id
+    de la regla puede no coincidir con los sectores hidráulicos.
+    """
+    return execute_query("""
         SELECT id, sector_id, text
         FROM v_edit_inp_rules
-        WHERE sector_id IN ({ph}) AND active IS TRUE
+        WHERE active IS TRUE
         ORDER BY id
-    """, sector_ids)
+    """)
 
 
 def get_demandas_por_sector(sector_ids):
