@@ -453,7 +453,7 @@ def get_autonomia_depositos(result_id, sector_ids):
             WHERE rn.result_id = %s
               AND n.sector_id IN ({ph})
               AND n.epa_type = 'TANK'
-            GROUP BY n.node_id, n.code, s.name, n.sector_id, n.elevation, mt.vutil, mt.vmax
+            GROUP BY n.node_id, n.code, n.descript, s.name, n.sector_id, n.elevation, mt.name, mt.vutil, mt.vmax
         ),
         dep_caudal AS (
             SELECT a.node_1 AS node_id,
