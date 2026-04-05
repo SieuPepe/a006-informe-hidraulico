@@ -105,7 +105,7 @@ def solicitar_parametros_documento(params):
     params["plantilla"] = plantilla
 
     # 2. Campos manuales
-    print("\n[2/4] Datos manuales del municipio")
+    print("\n[2/3] Datos manuales del municipio")
     print("  (Introduce los valores o pulsa Enter para dejar vacío)")
     campos_manuales = {}
     for clave, descripcion in CAMPOS_MANUALES:
@@ -113,21 +113,8 @@ def solicitar_parametros_documento(params):
         campos_manuales[clave] = valor
     params["campos_manuales"] = campos_manuales
 
-    # 3. Descripción del sistema (marcador descripcion_sistema)
-    print("\n[3/4] Descripción del sistema de abastecimiento")
-    print("  Pega el texto descriptivo del funcionamiento general del sistema.")
-    print("  (Se insertará en el marcador 'descripcion_sistema')")
-    print("  (Escribe END en una línea nueva para terminar)")
-    lines = []
-    while True:
-        line = input("  ")
-        if line.strip().upper() == "END":
-            break
-        lines.append(line)
-    params["descripcion_sistema"] = "\n".join(lines)
-
-    # 4. Descripción de sectores
-    print("\n[4/4] Descripción de la sectorización")
+    # 3. Descripción de sectores
+    print("\n[3/3] Descripción de la sectorización")
     print("  Escribe un párrafo descriptivo de los sectores hidráulicos del municipio.")
     print("  (Este texto se insertará en el marcador 'descripcion_sectores')")
     descripcion_sectores = input("  Texto: ").strip()
@@ -210,7 +197,7 @@ def main():
     # Insertar textos manuales del usuario (siempre, independiente de AI)
     from word.bookmarks import _find_bookmarks, _insert_text_at_bookmark
     bookmarks = _find_bookmarks(doc)
-    for bm_name in ("descripcion_sistema", "descripcion_sectores"):
+    for bm_name in ("descripcion_sectores",):
         texto = params.get(bm_name, "")
         if texto and bm_name in bookmarks:
             _insert_text_at_bookmark(bookmarks[bm_name], texto)
