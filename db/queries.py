@@ -348,7 +348,8 @@ def get_reglas(sector_ids):
 def get_demandas_por_sector(sector_ids):
     """Demanda media por sector hidráulico.
 
-    Usa v_edit_connec.demand (demanda asignada a cada acometida en l/s).
+    Usa inp_connec.demand (demanda asignada a cada acometida en l/s).
+    v_edit_connec.demand es NULL; inp_connec tiene los valores reales.
     """
     ph = ','.join(['%s'] * len(sector_ids))
     return execute_query(f"""
@@ -356,10 +357,11 @@ def get_demandas_por_sector(sector_ids):
             s.sector_id,
             s.name AS nombre_sector,
             COUNT(DISTINCT c.connec_id) AS num_abonados,
-            ROUND(COALESCE(SUM(c.demand), 0)::numeric, 3) AS demanda_media_ls,
-            ROUND(COALESCE(SUM(c.demand), 0) * 86.4, 1) AS demanda_media_m3dia
+            ROUND(COALESCE(SUM(ic.demand), 0)::numeric, 3) AS demanda_media_ls,
+            ROUND(COALESCE(SUM(ic.demand), 0) * 86.4, 1) AS demanda_media_m3dia
         FROM sector s
-        LEFT JOIN v_edit_connec c ON c.sector_id = s.sector_id AND c.state = 1
+        LEFT JOIN connec c ON c.sector_id = s.sector_id AND c.state = 1
+        LEFT JOIN inp_connec ic ON ic.connec_id = c.connec_id
         WHERE s.sector_id IN ({ph})
         GROUP BY s.sector_id, s.name
         ORDER BY s.sector_id
