@@ -177,24 +177,16 @@ def main():
 
     doc = docx.Document(params["plantilla"])
 
-    print("\n  [1/5] Rellenando campos DOCPROPERTY...")
+    print("\n  [1/4] Rellenando campos DOCPROPERTY...")
     rellenar_docproperties(doc, params, datos_muni, resultados)
 
-    print("  [2/5] Rellenando tablas...")
+    print("  [2/4] Rellenando tablas...")
     rellenar_tablas(doc, datos_muni, datos_sectores, resultados)
 
-    print("  [3/5] Replicando bloques de sector...")
+    print("  [3/4] Replicando bloques de sector...")
     replicar_sectores(doc, datos_sectores, resultados)
 
-    # Generación de textos AI (opcional)
-    generar_ai = input("\n  ¿Generar textos narrativos con Claude API? (s/n): ").strip().lower()
-    if generar_ai == "s":
-        print("  [4/5] Generando textos con Claude API...")
-        rellenar_marcadores(doc, params, datos_muni, datos_sectores, resultados)
-    else:
-        print("  [4/5] Textos AI omitidos — los marcadores quedarán vacíos.")
-
-    # Insertar textos manuales del usuario (siempre, independiente de AI)
+    # Insertar textos manuales del usuario
     from word.bookmarks import _find_bookmarks, _insert_text_at_bookmark
     bookmarks = _find_bookmarks(doc)
     for bm_name in ("descripcion_sectores",):
@@ -202,7 +194,7 @@ def main():
         if texto and bm_name in bookmarks:
             _insert_text_at_bookmark(bookmarks[bm_name], texto)
 
-    print("  [5/5] Guardando documento...")
+    print("  [4/4] Guardando documento...")
     nombre_salida = (
         f"A006_{params['municipio_nombre'].upper().replace(' ', '_')}.docx"
     )
@@ -211,7 +203,32 @@ def main():
 
     print("\n" + "=" * 60)
     print(f"  ✓ Informe generado: {ruta_salida}")
-    print("=" * 60 + "\n")
+    print("=" * 60)
+
+    # ── FASE 5: Generación de textos con Claude (tras revisión manual) ──
+    print("\n  Revisa y edita el documento en Word antes de continuar.")
+    print(f"  Archivo: {ruta_salida}")
+    generar_ai = input("\n  ¿Enviar a Claude para generar textos narrativos? (s/n): ").strip().lower()
+
+    if generar_ai == "s":
+        print("\n" + "=" * 60)
+        print("  GENERANDO TEXTOS CON CLAUDE API...")
+        print("=" * 60)
+
+        # Reabrir el documento editado por el usuario
+        doc = docx.Document(str(ruta_salida))
+
+        print("\n  Generando textos narrativos...")
+        rellenar_marcadores(doc, params, datos_muni, datos_sectores, resultados)
+
+        doc.save(str(ruta_salida))
+
+        print("\n" + "=" * 60)
+        print(f"  ✓ Textos narrativos añadidos: {ruta_salida}")
+        print("=" * 60 + "\n")
+    else:
+        print("\n  Ejecución finalizada. Los marcadores narrativos quedan vacíos.")
+        print("  Puedes volver a ejecutar el script para generar los textos.\n")
 
 
 if __name__ == "__main__":
