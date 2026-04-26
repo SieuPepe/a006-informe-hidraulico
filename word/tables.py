@@ -269,8 +269,8 @@ def _fill_bombeos(doc, datos_sectores):
 def _fill_grupos_presion(doc, datos_muni, datos_sectores):
     """TABLA_GRUPOS_PRESION — Grupos de presión (Cap 2.6).
 
-    Columnas: Nombre | Ubicación | Nº grupos | Presión de consigna (m.c.a.) |
-              Caudal máximo (l/s) | Potencia instalada (kW) | Zona abastecida
+    Columnas: Nombre | Ubicación | Nº bombas | Curva |
+              Presión de consigna (mca) | Zona abastecida
     """
     table = _find_table_by_marker(doc, "{{TABLA_GRUPOS_PRESION}}")
     if not table:
@@ -287,13 +287,19 @@ def _fill_grupos_presion(doc, datos_muni, datos_sectores):
     if not grupos:
         return
     for g in grupos:
+        # Presión sin decimales si es numérica
+        presion = _safe_get(g, "presion_consigna")
+        if presion not in (None, ""):
+            try:
+                presion = int(round(float(presion)))
+            except (ValueError, TypeError):
+                pass
         _add_row(table, [
             _safe_get(g, "nombre", _safe_get(g, "code")),
             g.get("_sector", ""),
-            1,  # Nº bombas
-            "",  # Presión consigna
-            "",  # Caudal máximo
-            _safe_get(g, "power"),
+            "",  # Nº bombas (queda vacío a propósito)
+            _safe_get(g, "curve_id"),
+            presion,
             g.get("_sector", ""),
         ])
 

@@ -275,7 +275,8 @@ def get_datos_sectores(sector_ids):
         """, (sid,))
         s['bombas'] = execute_query("""
             SELECT n.code, COALESCE(n.descript, n.code) AS nombre,
-                ip.pump_type, ip.curve_id, ip.power
+                ip.pump_type, ip.curve_id, ip.power,
+                ip.pressure AS presion_consigna
             FROM node n
             JOIN inp_pump ip ON ip.node_id = n.node_id
             WHERE n.sector_id = %s AND n.state = 1
