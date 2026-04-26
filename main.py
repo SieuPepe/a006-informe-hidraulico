@@ -4,6 +4,7 @@ Proyecto URBITIK — Consorcio de Aguas de Álava (Urbide)
 
 Uso: python main.py
 """
+import os
 import sys
 from pathlib import Path
 from db.connection import test_connection
@@ -29,6 +30,56 @@ CAMPOS_MANUALES = [
     ("etap", "Estación de tratamiento (ETAP) — nombre y descripción breve"),
     ("multiplicador_demanda", "Multiplicador de demanda (demand multiplier de la simulación)"),
 ]
+
+
+def pedir_ruta_plantilla():
+    """Solicita la ruta de la plantilla Word, validando que sea un .docx existente.
+
+    Limpia comillas, espacios, expande ~ y variables de entorno, y permite
+    reintentar si la ruta no existe (en lugar de salir del programa).
+    """
+    while True:
+        raw = input("  Ruta completa de la plantilla (.docx): ").strip()
+        if not raw:
+            print("  ERROR: ruta vacía. Inténtalo de nuevo.")
+            continue
+
+        # Limpia comillas dobles, simples y curly quotes habituales al copiar
+        for ch in ('"', "'", "“", "”", "‘", "’"):
+            raw = raw.strip(ch)
+        raw = raw.strip()
+
+        # Expande ~ y variables de entorno (%USERPROFILE%, $HOME...)
+        ruta = Path(os.path.expandvars(os.path.expanduser(raw)))
+
+        if not ruta.exists():
+            print(f"  ERROR: No se encontró el archivo:\n    {ruta}")
+            # Si el directorio padre existe, lista .docx disponibles para ayudar
+            if ruta.parent.exists():
+                docxs = sorted(ruta.parent.glob("*.docx"))
+                if docxs:
+                    print(f"  Archivos .docx en {ruta.parent}:")
+                    for d in docxs[:10]:
+                        print(f"    - {d.name}")
+                else:
+                    print(f"  (No hay archivos .docx en {ruta.parent})")
+            else:
+                print(f"  El directorio padre no existe: {ruta.parent}")
+                print("  Pista: si la ruta es de OneDrive, comprueba la ubicación")
+                print("  real desde el Explorador (botón derecho > Copiar ruta) y")
+                print("  asegúrate de que el archivo esté descargado localmente.")
+            print("  Vuelve a introducir la ruta (o Ctrl+C para salir).")
+            continue
+
+        if ruta.is_dir():
+            print(f"  ERROR: la ruta es un directorio, no un archivo .docx.")
+            continue
+
+        if ruta.suffix.lower() != ".docx":
+            print(f"  ERROR: el archivo no tiene extensión .docx ({ruta.suffix}).")
+            continue
+
+        return str(ruta)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -98,10 +149,7 @@ def solicitar_parametros_documento(params):
 
     # 1. Plantilla Word
     print("\n[1/3] Plantilla Word")
-    plantilla = input("  Ruta completa de la plantilla (.docx): ").strip().strip('"')
-    if not Path(plantilla).exists():
-        print(f"  ERROR: No se encontró el archivo {plantilla}")
-        sys.exit(1)
+    plantilla = pedir_ruta_plantilla()
     print(f"  Plantilla: {Path(plantilla).name}")
     params["plantilla"] = plantilla
 
@@ -175,8 +223,11 @@ def main():
     from word.sectors import replicar_sectores
     from word.bookmarks import rellenar_marcadores
     import docx
-
-    doc = docx.Document(params["plantilla"])
+    plantilla_path = Path(params["plantilla"])
+    if not plantilla_path.exists():
+        print(f"\nERROR: la plantilla ya no existe en la ruta indicada:\n  {plantilla_path}")
+        sys.exit(1)
+    doc = docx.Document(str(plantilla_path))
 
     print("\n  [1/4] Rellenando campos DOCPROPERTY...")
     rellenar_docproperties(doc, params, datos_muni, resultados)
