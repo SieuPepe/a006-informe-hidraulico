@@ -246,22 +246,23 @@ def _fill_bombeos(doc, datos_sectores):
     bombas = []
     for sector in datos_sectores:
         for b in sector.get("bombas", []):
-            b_copy = dict(b)
-            b_copy["_sector"] = sector.get("nombre_sector", "")
-            bombas.append(b_copy)
+            if _safe_get(b, "pump_type", "").upper() == "FLOWPUMP":
+                b_copy = dict(b)
+                b_copy["_sector"] = sector.get("nombre_sector", "")
+                bombas.append(b_copy)
     _clear_data_rows(table)
     if not bombas:
         return
     for b in bombas:
         _add_row(table, [
             _safe_get(b, "nombre", _safe_get(b, "code")),
-            _safe_get(b, "ubicacion", b.get("_sector", "")),
-            _safe_get(b, "num_grupos", 1),
-            _safe_get(b, "caudal_nominal"),
-            _safe_get(b, "altura_manometrica"),
-            _safe_get(b, "potencia_kw"),
-            _safe_get(b, "deposito_aspiracion"),
-            _safe_get(b, "deposito_impulsion"),
+            b.get("_sector", ""),
+            1,  # Nº bombas
+            _safe_get(b, "curve_id"),
+            "",  # Altura manométrica
+            _safe_get(b, "power"),
+            "",  # Depósito aspiración
+            "",  # Depósito impulsión
         ])
 
 
@@ -275,25 +276,25 @@ def _fill_grupos_presion(doc, datos_muni, datos_sectores):
     if not table:
         logger.warning("Tabla TABLA_GRUPOS_PRESION no encontrada.")
         return
-    grupos = datos_muni.get("grupos_presion", [])
-    if not grupos:
-        for sector in datos_sectores:
-            for g in sector.get("grupos_presion", []):
-                g_copy = dict(g)
-                g_copy["_sector"] = sector.get("nombre_sector", "")
-                grupos.append(g_copy)
+    grupos = []
+    for sector in datos_sectores:
+        for b in sector.get("bombas", []):
+            if _safe_get(b, "pump_type", "").upper() == "PRESSPUMP":
+                b_copy = dict(b)
+                b_copy["_sector"] = sector.get("nombre_sector", "")
+                grupos.append(b_copy)
     _clear_data_rows(table)
     if not grupos:
         return
     for g in grupos:
         _add_row(table, [
             _safe_get(g, "nombre", _safe_get(g, "code")),
-            _safe_get(g, "ubicacion"),
-            _safe_get(g, "num_grupos", 1),
-            _safe_get(g, "presion_consigna"),
-            _safe_get(g, "caudal_maximo"),
-            _safe_get(g, "potencia_kw"),
-            _safe_get(g, "zona_abastecida", g.get("_sector", "")),
+            g.get("_sector", ""),
+            1,  # Nº bombas
+            "",  # Presión consigna
+            "",  # Caudal máximo
+            _safe_get(g, "power"),
+            g.get("_sector", ""),
         ])
 
 
@@ -324,10 +325,18 @@ def _fill_vrp(doc, datos_sectores):
                 presion = int(round(float(presion)))
             except (ValueError, TypeError):
                 pass
+        # Diámetro: intentar de diametro_mm, si NULL extraer de nodecat_id
+        diametro = _safe_get(v, "diametro_mm")
+        if not diametro:
+            nodecat = _safe_get(v, "nodecat_id", "")
+            import re
+            m = re.search(r'(\d+)', str(nodecat))
+            if m:
+                diametro = m.group(1)
         _add_row(table, [
             _safe_get(v, "code"),
             v.get("_sector", ""),
-            _safe_get(v, "diametro_mm"),
+            diametro,
             presion,
             v.get("_sector", ""),
         ])

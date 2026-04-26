@@ -50,6 +50,7 @@ FIELD_MAP = {
     "Num_Sectores": "num_sectores",
     "Hora_Punta": "hora_punta",
     "Hora_Minimo": "hora_minimo",
+    "multiplicador_demanda": "multiplicador_demanda",
 }
 
 

@@ -109,15 +109,23 @@ def get_datos_municipio(muni_id, sector_ids):
         WHERE n.sector_id IN ({ph}) AND n.state = 1 AND n.epa_type = 'TANK'
     """, sector_ids)
 
-    # Bombas
+    # Bombas (PUMP con pump_type=FLOWPUMP)
     bombas = execute_scalar(f"""
         SELECT COUNT(*)
-        FROM node
-        WHERE sector_id IN ({ph}) AND state = 1 AND epa_type = 'PUMP'
+        FROM node n
+        JOIN inp_pump ip ON ip.node_id = n.node_id
+        WHERE n.sector_id IN ({ph}) AND n.state = 1
+          AND n.epa_type = 'PUMP' AND ip.pump_type = 'FLOWPUMP'
     """, sector_ids) or 0
 
-    # Grupos de presión — si tienen codificación específica
-    grupos_presion = 0  # TODO: adaptar si hay campo diferenciador
+    # Grupos de presión (PUMP con pump_type=PRESSPUMP)
+    grupos_presion = execute_scalar(f"""
+        SELECT COUNT(*)
+        FROM node n
+        JOIN inp_pump ip ON ip.node_id = n.node_id
+        WHERE n.sector_id IN ({ph}) AND n.state = 1
+          AND n.epa_type = 'PUMP' AND ip.pump_type = 'PRESSPUMP'
+    """, sector_ids) or 0
 
     # Válvulas reductoras
     vrp = execute_scalar(f"""
@@ -246,10 +254,10 @@ def get_datos_sectores(sector_ids):
         s['depositos'] = execute_query("""
             SELECT n.code,
                 COALESCE(mt.name, n.descript, n.code) AS nombre,
-                ROUND(COALESCE(mt.elev_fondo, n.elevation)::numeric, 2) AS cota_solera,
-                ROUND((COALESCE(mt.elev_fondo, n.elevation) + COALESCE(mt.hmax, 0))::numeric, 2) AS cota_rebose,
-                ROUND((COALESCE(mt.elev_fondo, n.elevation) + COALESCE(it.minlevel, 0))::numeric, 2) AS cota_minima,
-                ROUND((COALESCE(mt.elev_fondo, n.elevation) + COALESCE(it.maxlevel, mt.hmax, 0))::numeric, 2) AS cota_maxima,
+                ROUND(n.elevation::numeric, 2) AS cota_solera,
+                ROUND((n.elevation + COALESCE(it.maxlevel, 0))::numeric, 2) AS cota_rebose,
+                ROUND((n.elevation + COALESCE(it.minlevel, 0))::numeric, 2) AS cota_minima,
+                ROUND((n.elevation + COALESCE(it.maxlevel, 0))::numeric, 2) AS cota_maxima,
                 ROUND(COALESCE(mt.vutil, mt.vmax, 0)::numeric, 0) AS volumen_m3
             FROM node n
             LEFT JOIN man_tank mt ON mt.node_id = n.node_id
@@ -266,17 +274,22 @@ def get_datos_sectores(sector_ids):
             ORDER BY n.code
         """, (sid,))
         s['bombas'] = execute_query("""
-            SELECT code, COALESCE(descript, code) AS nombre
-            FROM node
-            WHERE sector_id = %s AND state = 1 AND epa_type = 'PUMP'
-            ORDER BY code
+            SELECT n.code, COALESCE(n.descript, n.code) AS nombre,
+                ip.pump_type, ip.curve_id, ip.power
+            FROM node n
+            JOIN inp_pump ip ON ip.node_id = n.node_id
+            WHERE n.sector_id = %s AND n.state = 1
+              AND n.epa_type = 'PUMP'
+            ORDER BY n.code
         """, (sid,))
         s['vrp'] = execute_query("""
             SELECT n.code, COALESCE(n.descript, n.code) AS nombre,
+                iv.valv_type,
+                iv.nodecat_id,
                 COALESCE(iv.custom_dint, iv.cat_dint) AS diametro_mm,
-                iv.pressure AS presion_consigna
+                ROUND(COALESCE(iv.pressure, iv.flow)::numeric, 0) AS presion_consigna
             FROM node n
-            LEFT JOIN v_edit_inp_valve iv ON iv.node_id = n.node_id
+            LEFT JOIN v_edit_inp_valve iv ON iv.node_id::text = n.node_id::text
             WHERE n.sector_id = %s AND n.state = 1
               AND n.epa_type IN ('PRV', 'VALVE')
             ORDER BY n.code
@@ -539,9 +552,18 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
               AND n.sector_id IN ({ph}) AND n.epa_type = 'JUNCTION'
         """, p_nodos)
 
+        # Caudal inyectado = sum(demand) de nodos TANK + RESERVOIR
+        caudal_inj = execute_query(f"""
+            SELECT ROUND(SUM(ABS(rn.demand))::numeric, 2) AS caudal_total_ls
+            FROM rpt_node rn
+            JOIN node n ON n.node_id = rn.node_id
+            WHERE rn.result_id = %s AND rn.time = %s
+              AND n.sector_id IN ({ph})
+              AND n.epa_type IN ('TANK', 'RESERVOIR')
+        """, p_nodos)
+
         arcos = execute_query(f"""
             SELECT
-                ROUND(SUM(ABS(ra.flow))::numeric, 2) AS caudal_total_ls,
                 ROUND(AVG(ABS(ra.vel))::numeric, 3) AS velocidad_media,
                 ROUND(MAX(ABS(ra.vel))::numeric, 3) AS velocidad_maxima,
                 ROUND(100.0 * COUNT(CASE WHEN ABS(ra.vel) < 0.05 THEN 1 END)
@@ -556,6 +578,7 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
 
         resultados[escenario] = {
             "time": time_val,
+            **(caudal_inj[0] if caudal_inj else {}),
             **(nodos[0] if nodos else {}),
             **(arcos[0] if arcos else {}),
         }
