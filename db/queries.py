@@ -444,8 +444,9 @@ def get_tpi_por_sector(result_id, sector_ids):
     ph = ','.join(['%s'] * len(sector_ids))
 
     # TPI presión: evaluado SOLO en connec (puntos de servicio).
+    # JOIN con connec en lugar de node (los connecs no están en `node`).
     tpi_press = execute_query(f"""
-        SELECT n.sector_id,
+        SELECT c.sector_id,
             ROUND(AVG(
                 CASE
                     WHEN rn.press < 10 THEN 0.0
@@ -456,15 +457,12 @@ def get_tpi_por_sector(result_id, sector_ids):
                 END
             )::numeric, 4) AS tpi_presion
         FROM rpt_node rn
-        JOIN node n ON n.node_id = rn.node_id
+        JOIN connec c ON c.connec_id::text = rn.node_id::text
         WHERE rn.result_id = %s
-          AND n.sector_id IN ({ph})
-          AND n.epa_type = 'JUNCTION'
+          AND c.sector_id IN ({ph})
+          AND c.state = 1
           AND rn.press > 0
-          AND n.node_id::text IN (
-              SELECT c.connec_id::text FROM connec c WHERE c.state = 1
-          )
-        GROUP BY n.sector_id
+        GROUP BY c.sector_id
     """, [result_id] + list(sector_ids))
 
     # TPI velocidad
@@ -605,10 +603,10 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
         p_nodos = [result_id, time_val] + list(sector_ids)
         p_arcos = [result_id, time_val] + list(sector_ids)
 
-        # Presiones evaluadas SOLO en JUNCTIONS que provienen de connec
-        # (puntos de demanda/servicio). Excluye vnodes, salidas de depósito,
-        # aspiración/impulsión de bombas, etc., que distorsionarían la media
-        # con presiones extremas no representativas del servicio al usuario.
+        # Presiones evaluadas SOLO en connec (puntos de demanda/servicio).
+        # Los connecs se exportan a EPANET como JUNCTIONS con node_id = connec_id,
+        # pero NO existen en la tabla `node` — viven en `connec`. Por eso el
+        # JOIN se hace con `connec`, no con `node`.
         nodos = execute_query(f"""
             SELECT
                 ROUND(AVG(rn.press)::numeric, 2) AS presion_media,
@@ -619,12 +617,9 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
                 ROUND(100.0 * COUNT(CASE WHEN rn.press > 60 THEN 1 END)
                     / NULLIF(COUNT(*), 0), 1) AS pct_alta_presion
             FROM rpt_node rn
-            JOIN node n ON n.node_id = rn.node_id
+            JOIN connec c ON c.connec_id::text = rn.node_id::text
             WHERE rn.result_id = %s AND rn.time = %s
-              AND n.sector_id IN ({ph}) AND n.epa_type = 'JUNCTION'
-              AND n.node_id::text IN (
-                  SELECT c.connec_id::text FROM connec c WHERE c.state = 1
-              )
+              AND c.sector_id IN ({ph}) AND c.state = 1
         """, p_nodos)
 
         # Caudal NETO entrante al sistema = SUM(-rn.demand) sobre las
@@ -675,7 +670,9 @@ def get_resultados_por_sector(result_id, sector_ids, timesteps):
                 continue
             p = [result_id, time_val, sector_id]
 
-            # Presiones evaluadas SOLO en connec (puntos de demanda real)
+            # Presiones evaluadas SOLO en connec (puntos de demanda real).
+            # JOIN con connec porque los connecs no existen en la tabla `node`
+            # (a pesar de exportarse a EPANET como JUNCTIONS con node_id = connec_id).
             press = execute_query("""
                 SELECT
                     ROUND(MIN(rn.press)::numeric, 2) AS presion_minima,
@@ -685,12 +682,9 @@ def get_resultados_por_sector(result_id, sector_ids, timesteps):
                     COUNT(CASE WHEN rn.press > 60 THEN 1 END) AS nodos_alta_presion,
                     COUNT(*) AS total_nodos
                 FROM rpt_node rn
-                JOIN node n ON n.node_id = rn.node_id
+                JOIN connec c ON c.connec_id::text = rn.node_id::text
                 WHERE rn.result_id = %s AND rn.time = %s
-                  AND n.sector_id = %s AND n.epa_type = 'JUNCTION'
-                  AND n.node_id::text IN (
-                      SELECT c.connec_id::text FROM connec c WHERE c.state = 1
-                  )
+                  AND c.sector_id = %s AND c.state = 1
             """, p)
 
             vel = execute_query("""
