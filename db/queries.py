@@ -443,7 +443,7 @@ def get_tpi_por_sector(result_id, sector_ids):
     """
     ph = ','.join(['%s'] * len(sector_ids))
 
-    # TPI presión
+    # TPI presión: evaluado SOLO en connec (puntos de servicio).
     tpi_press = execute_query(f"""
         SELECT n.sector_id,
             ROUND(AVG(
@@ -461,6 +461,9 @@ def get_tpi_por_sector(result_id, sector_ids):
           AND n.sector_id IN ({ph})
           AND n.epa_type = 'JUNCTION'
           AND rn.press > 0
+          AND n.node_id::text IN (
+              SELECT c.connec_id::text FROM connec c WHERE c.state = 1
+          )
         GROUP BY n.sector_id
     """, [result_id] + list(sector_ids))
 
@@ -602,6 +605,10 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
         p_nodos = [result_id, time_val] + list(sector_ids)
         p_arcos = [result_id, time_val] + list(sector_ids)
 
+        # Presiones evaluadas SOLO en JUNCTIONS que provienen de connec
+        # (puntos de demanda/servicio). Excluye vnodes, salidas de depósito,
+        # aspiración/impulsión de bombas, etc., que distorsionarían la media
+        # con presiones extremas no representativas del servicio al usuario.
         nodos = execute_query(f"""
             SELECT
                 ROUND(AVG(rn.press)::numeric, 2) AS presion_media,
@@ -615,6 +622,9 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
             JOIN node n ON n.node_id = rn.node_id
             WHERE rn.result_id = %s AND rn.time = %s
               AND n.sector_id IN ({ph}) AND n.epa_type = 'JUNCTION'
+              AND n.node_id::text IN (
+                  SELECT c.connec_id::text FROM connec c WHERE c.state = 1
+              )
         """, p_nodos)
 
         # Caudal NETO entrante al sistema = SUM(-rn.demand) sobre las
@@ -665,6 +675,7 @@ def get_resultados_por_sector(result_id, sector_ids, timesteps):
                 continue
             p = [result_id, time_val, sector_id]
 
+            # Presiones evaluadas SOLO en connec (puntos de demanda real)
             press = execute_query("""
                 SELECT
                     ROUND(MIN(rn.press)::numeric, 2) AS presion_minima,
@@ -677,6 +688,9 @@ def get_resultados_por_sector(result_id, sector_ids, timesteps):
                 JOIN node n ON n.node_id = rn.node_id
                 WHERE rn.result_id = %s AND rn.time = %s
                   AND n.sector_id = %s AND n.epa_type = 'JUNCTION'
+                  AND n.node_id::text IN (
+                      SELECT c.connec_id::text FROM connec c WHERE c.state = 1
+                  )
             """, p)
 
             vel = execute_query("""
