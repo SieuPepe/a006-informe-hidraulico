@@ -35,18 +35,22 @@ def get_result_ids_disponibles():
 def get_timesteps_escenarios(result_id, sector_ids):
     """
     Identifica los timesteps de punta, media y mínimo nocturno
-    a partir de la demanda total real consumida en cada hora (rpt_node de JUNCTIONS).
-    No usa ABS(flow) porque en arcos cuenta el llenado de depósitos como inyección.
+    a partir del caudal inyectado al sistema en cada hora.
+
+    En esta instancia de Giswater, rpt_node.demand de JUNCTIONS está
+    siempre a 0 (las demandas se persisten solo en inp_connec). Por eso
+    el caudal por timestep se calcula sumando lo que SALE de las fuentes
+    (TANK + RESERVOIR), donde la convención es: demand<0 → sale agua.
     """
     placeholders = ','.join(['%s'] * len(sector_ids))
     params = [result_id] + list(sector_ids)
     sql = f"""
-        SELECT rn.time, SUM(rn.demand) AS caudal_total
+        SELECT rn.time, SUM(GREATEST(-rn.demand, 0)) AS caudal_total
         FROM rpt_node rn
         JOIN node n ON n.node_id = rn.node_id
         WHERE rn.result_id = %s
           AND n.sector_id IN ({placeholders})
-          AND n.epa_type = 'JUNCTION'
+          AND n.epa_type IN ('TANK', 'RESERVOIR')
         GROUP BY rn.time
         ORDER BY caudal_total DESC
     """
@@ -498,14 +502,14 @@ def get_autonomia_depositos(result_id, sector_ids):
             GROUP BY n.node_id, n.code, n.descript, s.name, n.sector_id, n.elevation, mt.name, mt.vutil, mt.vmax
         ),
         dep_caudal AS (
-            -- Caudal de salida medio del depósito = promedio de demand cuando es positivo.
-            -- En EPANET, rn.demand de un TANK refleja el balance neto:
-            --   > 0 → sale agua hacia la red
-            --   < 0 → entra agua (se está llenando)
-            -- Antes se usaba AVG(ABS(flow)) en arcos con node_1 = depósito, pero
-            -- si el arco estaba digitalizado al revés (node_2 = depósito) salía 0.
+            -- Caudal de salida medio del depósito = promedio de lo que sale.
+            -- Convención Giswater: rn.demand de TANK es NEGATIVO cuando sale
+            -- agua, POSITIVO cuando entra (se llena). GREATEST(-demand, 0)
+            -- captura solo el caudal saliente, sin contaminar con llenados.
+            -- Antes se usaba AVG(ABS(flow)) en arcos con node_1 = depósito,
+            -- que fallaba si el arco estaba digitalizado al revés.
             SELECT n.node_id,
-                ROUND(AVG(GREATEST(rn.demand, 0))::numeric, 3) AS caudal_salida_ls
+                ROUND(AVG(GREATEST(-rn.demand, 0))::numeric, 3) AS caudal_salida_ls
             FROM rpt_node rn
             JOIN node n ON n.node_id = rn.node_id
             WHERE rn.result_id = %s
@@ -585,13 +589,13 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
               AND n.sector_id IN ({ph}) AND n.epa_type = 'JUNCTION'
         """, p_nodos)
 
-        # Caudal inyectado al sistema = lo que SALE de las fuentes
-        # (TANK + RESERVOIR con demand > 0). El llenado de un TANK tiene
-        # demand < 0 y se descarta con GREATEST(demand, 0). Esto evita
-        # los falsos positivos del antiguo SUM(ABS(demand)) que disparaba
-        # los caudales en instantes de carga de depósitos.
+        # Caudal inyectado al sistema = lo que SALE de las fuentes.
+        # Convención Giswater: rn.demand de TANK/RESERVOIR es NEGATIVO
+        # cuando sale agua, POSITIVO cuando entra (se llena).
+        # GREATEST(-demand, 0) da solo lo que sale (positivo) y descarta
+        # los llenados de tanks. RESERVOIR siempre tiene demand<0 → aporta.
         caudal_inj = execute_query(f"""
-            SELECT ROUND(SUM(GREATEST(rn.demand, 0))::numeric, 2) AS caudal_total_ls
+            SELECT ROUND(SUM(GREATEST(-rn.demand, 0))::numeric, 2) AS caudal_total_ls
             FROM rpt_node rn
             JOIN node n ON n.node_id = rn.node_id
             WHERE rn.result_id = %s AND rn.time = %s
