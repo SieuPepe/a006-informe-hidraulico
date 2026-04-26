@@ -18,3 +18,4 @@ output/
 
 # Logs
 *.log
+/git_init.ps1
