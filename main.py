@@ -6,7 +6,15 @@ Uso: python main.py
 """
 import os
 import sys
+import logging
 from pathlib import Path
+
+# Mostrar info/warnings de los módulos word/ y ai/ por consola.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s [%(name)s] %(message)s",
+)
+
 from db.connection import test_connection
 from db.queries import (
     get_municipio_nombre,

@@ -252,6 +252,14 @@ def _update_table_markers(block_elements, sector_number):
     Update the table placeholder markers in the cloned block so each sector
     has unique markers. For example:
       {{TABLA_SECTOR_MEDIA}} -> {{TABLA_SECTOR_1_MEDIA}}
+
+    Word often splits a literal like ``{{TABLA_SECTOR_MEDIA}}`` across
+    several <w:t> runs (e.g. ``{{TABLA_``, ``SECTOR_``, ``MEDIA}}``).
+    Iterating one <w:t> at a time would miss those split markers, so we
+    aggregate text per paragraph (<w:p>), do the replacement on the full
+    string, and write the new text back into the first <w:t>, blanking
+    the rest. The marker fills its own paragraph in the template, so
+    collapsing runs preserves visible formatting.
     """
     marker_map = {
         '{{TABLA_SECTOR_MEDIA}}':      f'{{{{TABLA_SECTOR_{sector_number}_MEDIA}}}}',
@@ -260,12 +268,39 @@ def _update_table_markers(block_elements, sector_number):
         '{{TABLA_SECTOR_DEPOSITOS}}':  f'{{{{TABLA_SECTOR_{sector_number}_DEPOSITOS}}}}',
     }
 
+    replacements = 0
     for elem in block_elements:
-        for t_elem in elem.iter(_qn('t')):
-            if t_elem.text:
-                for old_marker, new_marker in marker_map.items():
-                    if old_marker in t_elem.text:
-                        t_elem.text = t_elem.text.replace(old_marker, new_marker)
+        for p in elem.iter(_qn('p')):
+            t_elements = p.findall(f'.//{_qn("t")}')
+            if not t_elements:
+                continue
+            full_text = ''.join(t.text or '' for t in t_elements)
+
+            new_text = full_text
+            for old_marker, new_marker in marker_map.items():
+                if old_marker in new_text:
+                    new_text = new_text.replace(old_marker, new_marker)
+
+            if new_text != full_text:
+                t_elements[0].text = new_text
+                t_elements[0].set(
+                    '{http://www.w3.org/XML/1998/namespace}space', 'preserve'
+                )
+                for t in t_elements[1:]:
+                    t.text = ''
+                replacements += 1
+
+    if replacements:
+        logger.info(
+            "_update_table_markers sector %d: %d marcadores reemplazados",
+            sector_number, replacements,
+        )
+    else:
+        logger.warning(
+            "_update_table_markers sector %d: NO se reemplazó ningún marcador. "
+            "Comprueba que el bloque plantilla contiene {{TABLA_SECTOR_MEDIA}} y similares.",
+            sector_number,
+        )
 
 
 def _update_narrative_hidden_text(block_elements, sector_number):
