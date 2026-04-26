@@ -15,6 +15,8 @@ venv/
 # Outputs generados
 output/
 *.docx
+# Excepción: plantillas Word sí se versionan
+!plantillas/*.docx
 
 # Logs
 *.log
