@@ -216,6 +216,20 @@ def _prompt_diagnostico_global(contexto):
             "Resume las principales fortalezas y debilidades del sistema.")
 
 
+def _prompt_descripcion_sistema(contexto):
+    return (f"Contexto general:\n{contexto}\n\n"
+            "Redacta una descripcion del FUNCIONAMIENTO GENERAL del sistema de "
+            "abastecimiento (capitulo 2.2 del informe). Debe explicar de forma "
+            "tecnica y concisa, en 1 o 2 parrafos:\n"
+            " - origen del agua (fuente o fuentes principales) y como llega a la red;\n"
+            " - papel de los depositos de regulacion en el sistema;\n"
+            " - sectorizacion hidraulica (numero de sectores y articulacion entre ellos);\n"
+            " - elementos de bombeo, grupos de presion y reductoras presentes y su funcion;\n"
+            " - regimen de funcionamiento (gravedad, mixto, predominantemente bombeado).\n"
+            "No repitas datos numericos detallados (eso ya esta en las tablas); "
+            "centra la narracion en la logica de operacion del sistema.")
+
+
 def _prompt_factores_condicionantes(contexto):
     return (f"Contexto general:\n{contexto}\n\n"
             "Identifica y describe los factores condicionantes del funcionamiento "
@@ -285,6 +299,11 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
     """
     contexto = _resumen_contexto(params, datos_muni, datos_sectores, resultados)
     textos = {}
+
+    # Descripcion general del sistema (capitulo 2.2)
+    logger.info("Generando descripcion general del sistema...")
+    textos["descripcion_sistema"] = _llamar_claude(
+        _prompt_descripcion_sistema(contexto))
 
     # Textos por sector (sector_1_presiones, sector_1_velocidades, sector_1_deposito, ...)
     num_sectores = len(datos_sectores) if datos_sectores else 0
