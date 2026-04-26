@@ -35,17 +35,25 @@ def get_result_ids_disponibles():
 def get_timesteps_escenarios(result_id, sector_ids):
     """
     Identifica los timesteps de punta, media y mínimo nocturno
-    a partir del caudal inyectado al sistema en cada hora.
+    a partir del caudal NETO entrante al sistema en cada hora.
 
-    En esta instancia de Giswater, rpt_node.demand de JUNCTIONS está
-    siempre a 0 (las demandas se persisten solo en inp_connec). Por eso
-    el caudal por timestep se calcula sumando lo que SALE de las fuentes
-    (TANK + RESERVOIR), donde la convención es: demand<0 → sale agua.
+    Caudal neto = SUM(-rn.demand) sobre TANK+RESERVOIR. Convención EPANET:
+        demand<0 → sale agua del nodo (aporta a la red)
+        demand>0 → entra agua al nodo (se llena el tank)
+    Al sumar -demand se obtiene el balance neto: lo que aportan reservoirs
+    y tanks descargando MENOS lo que se queda llenando tanks. Eso equivale
+    al consumo real en ese instante (las JUNCTIONS no persisten demand
+    en esta instancia de Giswater).
+
+    NOTA: usar GREATEST(-demand, 0) era incorrecto: contaba el caudal
+    saliente de un reservoir cuando ese caudal iba directamente a llenar
+    un tank, no al consumo. En instantes de carga masiva podía dar
+    cifras absurdas (ej. 515 l/s con velocidad media de 0.09 m/s).
     """
     placeholders = ','.join(['%s'] * len(sector_ids))
     params = [result_id] + list(sector_ids)
     sql = f"""
-        SELECT rn.time, SUM(GREATEST(-rn.demand, 0)) AS caudal_total
+        SELECT rn.time, SUM(-rn.demand) AS caudal_total
         FROM rpt_node rn
         JOIN node n ON n.node_id = rn.node_id
         WHERE rn.result_id = %s
@@ -599,13 +607,14 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
               AND n.sector_id IN ({ph}) AND n.epa_type = 'JUNCTION'
         """, p_nodos)
 
-        # Caudal inyectado al sistema = lo que SALE de las fuentes.
-        # Convención Giswater: rn.demand de TANK/RESERVOIR es NEGATIVO
-        # cuando sale agua, POSITIVO cuando entra (se llena).
-        # GREATEST(-demand, 0) da solo lo que sale (positivo) y descarta
-        # los llenados de tanks. RESERVOIR siempre tiene demand<0 → aporta.
+        # Caudal NETO entrante al sistema = SUM(-rn.demand) sobre las
+        # fuentes. Equivale al consumo real en ese instante:
+        # aportes reservoirs/tanks_descargando MENOS llenado de tanks.
+        # GREATEST(-demand, 0) era incorrecto porque contaba el caudal
+        # de un reservoir aunque ese caudal fuera a llenar un tank
+        # (no a consumirse), dando picos absurdos en instantes de carga.
         caudal_inj = execute_query(f"""
-            SELECT ROUND(SUM(GREATEST(-rn.demand, 0))::numeric, 2) AS caudal_total_ls
+            SELECT ROUND(SUM(-rn.demand)::numeric, 2) AS caudal_total_ls
             FROM rpt_node rn
             JOIN node n ON n.node_id = rn.node_id
             WHERE rn.result_id = %s AND rn.time = %s
