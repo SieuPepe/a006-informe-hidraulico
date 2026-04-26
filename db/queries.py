@@ -45,22 +45,32 @@ def get_timesteps_escenarios(result_id, sector_ids):
     al consumo real en ese instante (las JUNCTIONS no persisten demand
     en esta instancia de Giswater).
 
-    NOTA: usar GREATEST(-demand, 0) era incorrecto: contaba el caudal
-    saliente de un reservoir cuando ese caudal iba directamente a llenar
-    un tank, no al consumo. En instantes de carga masiva podía dar
-    cifras absurdas (ej. 515 l/s con velocidad media de 0.09 m/s).
+    Filtra timesteps OUTLIER (caudal > 5 × mediana). EPANET genera
+    transients numéricos puntuales (un único timestep con un pulso de
+    100x el caudal real) cuando arrancan/paran bombas o válvulas. Esos
+    valores sesgan la elección del "escenario máxima".
     """
     placeholders = ','.join(['%s'] * len(sector_ids))
     params = [result_id] + list(sector_ids)
     sql = f"""
-        SELECT rn.time, SUM(-rn.demand) AS caudal_total
-        FROM rpt_node rn
-        JOIN node n ON n.node_id = rn.node_id
-        WHERE rn.result_id = %s
-          AND n.sector_id IN ({placeholders})
-          AND n.epa_type IN ('TANK', 'RESERVOIR')
-        GROUP BY rn.time
-        ORDER BY caudal_total DESC
+        WITH caudal_por_time AS (
+            SELECT rn.time, SUM(-rn.demand) AS caudal_total
+            FROM rpt_node rn
+            JOIN node n ON n.node_id = rn.node_id
+            WHERE rn.result_id = %s
+              AND n.sector_id IN ({placeholders})
+              AND n.epa_type IN ('TANK', 'RESERVOIR')
+            GROUP BY rn.time
+        ),
+        mediana AS (
+            SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY caudal_total) AS med
+            FROM caudal_por_time
+            WHERE caudal_total > 0
+        )
+        SELECT cpt.time, cpt.caudal_total
+        FROM caudal_por_time cpt, mediana m
+        WHERE cpt.caudal_total <= m.med * 5
+        ORDER BY cpt.caudal_total DESC
     """
     rows = execute_query(sql, params)
     if not rows:
