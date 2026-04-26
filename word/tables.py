@@ -472,6 +472,10 @@ def _fill_demandas(doc, datos_muni):
 
     Columnas: Sector hidráulico | Nº abonados | Demanda media (l/s) |
               Demanda media (m³/día) | % sobre total
+
+    Las demandas se muestran con el DEMAND MULTIPLIER de EPANET aplicado
+    (caudal en alta = base × multiplicador) para que cuadren con el
+    volumen anual del balance hídrico.
     """
     table = _find_table_by_marker(doc, "{{TABLA_DEMANDAS}}")
     if not table:
@@ -480,16 +484,23 @@ def _fill_demandas(doc, datos_muni):
     demandas = datos_muni.get("demandas_sector", [])
     if not demandas:
         return
+    multiplicador = float(datos_muni.get("multiplicador_demanda", 1.0) or 1.0)
     _clear_data_rows(table)
-    total_ls = sum(float(_safe_get(d, "demanda_media_ls", 0) or 0) for d in demandas)
+    # Total en alta para calcular %
+    total_alta_ls = sum(
+        float(_safe_get(d, "demanda_media_ls", 0) or 0) * multiplicador
+        for d in demandas
+    )
     for d in demandas:
-        dem_ls = float(_safe_get(d, "demanda_media_ls", 0) or 0)
-        pct = round(100 * dem_ls / total_ls, 1) if total_ls > 0 else 0
+        dem_base_ls = float(_safe_get(d, "demanda_media_ls", 0) or 0)
+        dem_alta_ls = dem_base_ls * multiplicador
+        dem_alta_m3dia = dem_alta_ls * 86.4
+        pct = round(100 * dem_alta_ls / total_alta_ls, 1) if total_alta_ls > 0 else 0
         _add_row(table, [
             _safe_get(d, "nombre_sector", _safe_get(d, "sector_id")),
             _safe_get(d, "num_abonados"),
-            _safe_get(d, "demanda_media_ls"),
-            _safe_get(d, "demanda_media_m3dia"),
+            round(dem_alta_ls, 3),
+            round(dem_alta_m3dia, 1),
             pct,
         ])
 

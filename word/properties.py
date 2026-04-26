@@ -45,7 +45,7 @@ FIELD_MAP = {
     "Num_Nodos": "num_nodos",
     "Num_Connecs": "num_connecs",
     "Periodo_Demanda": "periodo_demanda",
-    "Demanda_Media_ls": "demanda_media_ls",
+    "Demanda_Media_ls": "demanda_alta_ls",
     "Demanda_Media_m3año": "demanda_media_m3ano",
     "Num_Sectores": "num_sectores",
     "Hora_Punta": "hora_punta",
