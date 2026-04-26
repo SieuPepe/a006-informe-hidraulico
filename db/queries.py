@@ -35,17 +35,19 @@ def get_result_ids_disponibles():
 def get_timesteps_escenarios(result_id, sector_ids):
     """
     Identifica los timesteps de punta, media y mínimo nocturno
-    a partir del caudal total inyectado en cada hora.
+    a partir de la demanda total real consumida en cada hora (rpt_node de JUNCTIONS).
+    No usa ABS(flow) porque en arcos cuenta el llenado de depósitos como inyección.
     """
     placeholders = ','.join(['%s'] * len(sector_ids))
     params = [result_id] + list(sector_ids)
     sql = f"""
-        SELECT ra.time, SUM(ABS(ra.flow)) AS caudal_total
-        FROM rpt_arc ra
-        JOIN v_edit_arc a ON a.arc_id = ra.arc_id
-        WHERE ra.result_id = %s
-          AND a.sector_id IN ({placeholders})
-        GROUP BY ra.time
+        SELECT rn.time, SUM(rn.demand) AS caudal_total
+        FROM rpt_node rn
+        JOIN node n ON n.node_id = rn.node_id
+        WHERE rn.result_id = %s
+          AND n.sector_id IN ({placeholders})
+          AND n.epa_type = 'JUNCTION'
+        GROUP BY rn.time
         ORDER BY caudal_total DESC
     """
     rows = execute_query(sql, params)
@@ -58,6 +60,25 @@ def get_timesteps_escenarios(result_id, sector_ids):
         'nocturno': rows[-1]['time'],
         'media':    min(rows, key=lambda r: abs(r['caudal_total'] - caudal_medio))['time'],
     }
+
+
+def get_demand_multiplier():
+    """Lee el factor multiplicador de demanda desde vi_options (parámetros EPANET).
+
+    En Giswater, vi_options es una tabla clave/valor con la configuración EPANET.
+    El parámetro 'DEMAND MULTIPLIER' lo aplica EPANET al simular (afecta a
+    rpt_node.demand). Si no existe, devuelve 1.0.
+    """
+    val = execute_scalar("""
+        SELECT value FROM vi_options
+        WHERE UPPER(parameter) = 'DEMAND MULTIPLIER'
+    """)
+    if val in (None, ''):
+        return 1.0
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 1.0
 
 
 # ─────────────────────────────────────────────────────────────
@@ -166,10 +187,14 @@ def get_datos_municipio(muni_id, sector_ids):
     # Demandas por sector
     demandas_sector = get_demandas_por_sector(sector_ids)
 
-    # Demanda total
+    # Demanda total (BASE = suma de inp_connec.demand de todos los sectores)
     demanda_total_ls = sum(
         float(d.get('demanda_media_ls') or 0) for d in demandas_sector
     )
+    # Factor multiplicador de EPANET (aplica fugas/incertidumbre)
+    multiplicador = get_demand_multiplier()
+    # Demanda en alta (entrada al sistema) = base × multiplicador
+    demanda_alta_ls = demanda_total_ls * multiplicador
 
     longitud_total = float(long_data[0]["longitud_total_km"] or 0) if long_data else 0
     longitud_primaria = float(long_prim or 0)
@@ -198,7 +223,9 @@ def get_datos_municipio(muni_id, sector_ids):
         "nombres_nodos": nombres_nodos,
         "demandas_sector": demandas_sector,
         "demanda_media_ls": round(demanda_total_ls, 3),
-        "demanda_media_m3ano": round(demanda_total_ls * 86.4 * 365, 0),
+        "demanda_alta_ls": round(demanda_alta_ls, 3),
+        "demanda_media_m3ano": round(demanda_alta_ls * 86.4 * 365, 0),
+        "multiplicador_demanda": multiplicador,
     }
 
 
@@ -552,14 +579,17 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
               AND n.sector_id IN ({ph}) AND n.epa_type = 'JUNCTION'
         """, p_nodos)
 
-        # Caudal inyectado = sum(demand) de nodos TANK + RESERVOIR
+        # Caudal inyectado al sistema = demanda real consumida en JUNCTIONS
+        # (ya incluye el DEMAND MULTIPLIER aplicado por EPANET).
+        # Antes se sumaba ABS(demand) de TANK+RESERVOIR, pero un TANK
+        # llenándose tiene demand<0 y el ABS lo contaba como inyección falsa.
         caudal_inj = execute_query(f"""
-            SELECT ROUND(SUM(ABS(rn.demand))::numeric, 2) AS caudal_total_ls
+            SELECT ROUND(SUM(rn.demand)::numeric, 2) AS caudal_total_ls
             FROM rpt_node rn
             JOIN node n ON n.node_id = rn.node_id
             WHERE rn.result_id = %s AND rn.time = %s
               AND n.sector_id IN ({ph})
-              AND n.epa_type IN ('TANK', 'RESERVOIR')
+              AND n.epa_type = 'JUNCTION'
         """, p_nodos)
 
         arcos = execute_query(f"""
