@@ -32,16 +32,90 @@ CAMPOS_MANUALES = [
 ]
 
 
-def pedir_ruta_plantilla():
-    """Solicita la ruta de la plantilla Word, validando que sea un .docx existente.
+PLANTILLAS_DIR = Path(__file__).resolve().parent / "plantillas"
 
-    Limpia comillas, espacios, expande ~ y variables de entorno, y permite
-    reintentar si la ruta no existe (en lugar de salir del programa).
+
+def _validar_docx(ruta: Path) -> tuple[bool, str]:
+    """Comprueba que el archivo es un .docx válido y abrible.
+
+    Devuelve (ok, motivo). Detecta casos típicos de OneDrive On-Demand,
+    archivos bloqueados por Word o ficheros corruptos.
+    """
+    if not ruta.exists():
+        return False, f"No se encontró el archivo: {ruta}"
+    if ruta.is_dir():
+        return False, "La ruta es un directorio, no un archivo .docx."
+    if ruta.suffix.lower() != ".docx":
+        return False, f"El archivo no tiene extensión .docx ({ruta.suffix})."
+    try:
+        size = ruta.stat().st_size
+    except OSError as e:
+        return False, f"No se puede leer la metadata del archivo: {e}"
+    if size == 0:
+        return False, "El archivo tiene 0 bytes (placeholder de OneDrive sin descargar?)."
+    # Un .docx es un ZIP. Comprobamos la firma "PK" en los primeros 2 bytes.
+    try:
+        with open(ruta, "rb") as f:
+            head = f.read(4)
+    except PermissionError:
+        return False, "Permiso denegado. ¿Lo tienes abierto en Word? Ciérralo y reintenta."
+    except OSError as e:
+        return False, f"No se puede abrir el archivo: {e}"
+    if not head.startswith(b"PK"):
+        return False, (
+            "El archivo no es un ZIP/.docx válido (¿descarga incompleta de OneDrive, "
+            "o archivo corrupto?)."
+        )
+    return True, "ok"
+
+
+def _listar_plantillas() -> list[Path]:
+    """Devuelve la lista ordenada de .docx en la carpeta `plantillas/`."""
+    if not PLANTILLAS_DIR.exists():
+        return []
+    return sorted(PLANTILLAS_DIR.glob("*.docx"))
+
+
+def pedir_ruta_plantilla():
+    """Solicita la plantilla Word.
+
+    1) Si hay .docx en la carpeta `plantillas/`, los lista numerados y permite
+       elegir uno (recomendado: ruta estable, sin OneDrive de por medio).
+    2) Permite también introducir una ruta manual con la opción 'm'.
+    Valida que sea un .docx abrible (no un placeholder de OneDrive ni un
+    archivo bloqueado).
     """
     while True:
+        plantillas_locales = _listar_plantillas()
+
+        if plantillas_locales:
+            print(f"\n  Plantillas disponibles en {PLANTILLAS_DIR.name}/:")
+            for i, p in enumerate(plantillas_locales, 1):
+                print(f"    [{i}] {p.name}")
+            print("    [m] Introducir ruta manual")
+            opcion = input("  Selecciona una opción: ").strip().lower()
+
+            if opcion == "m":
+                pass  # cae al flujo manual abajo
+            elif opcion.isdigit() and 1 <= int(opcion) <= len(plantillas_locales):
+                ruta = plantillas_locales[int(opcion) - 1]
+                ok, motivo = _validar_docx(ruta)
+                if ok:
+                    return str(ruta)
+                print(f"  ERROR: {motivo}")
+                continue
+            else:
+                print("  ERROR: opción no válida.")
+                continue
+        else:
+            print(f"\n  (No hay .docx en {PLANTILLAS_DIR}/. Introduce ruta manual.)")
+            print("  Sugerencia: copia la plantilla a esa carpeta para no depender")
+            print("  de rutas externas (OneDrive, unidades de red, etc.).")
+
+        # Flujo manual
         raw = input("  Ruta completa de la plantilla (.docx): ").strip()
         if not raw:
-            print("  ERROR: ruta vacía. Inténtalo de nuevo.")
+            print("  ERROR: ruta vacía.")
             continue
 
         # Limpia comillas dobles, simples y curly quotes habituales al copiar
@@ -49,37 +123,18 @@ def pedir_ruta_plantilla():
             raw = raw.strip(ch)
         raw = raw.strip()
 
-        # Expande ~ y variables de entorno (%USERPROFILE%, $HOME...)
         ruta = Path(os.path.expandvars(os.path.expanduser(raw)))
+        ok, motivo = _validar_docx(ruta)
+        if ok:
+            return str(ruta)
 
-        if not ruta.exists():
-            print(f"  ERROR: No se encontró el archivo:\n    {ruta}")
-            # Si el directorio padre existe, lista .docx disponibles para ayudar
-            if ruta.parent.exists():
-                docxs = sorted(ruta.parent.glob("*.docx"))
-                if docxs:
-                    print(f"  Archivos .docx en {ruta.parent}:")
-                    for d in docxs[:10]:
-                        print(f"    - {d.name}")
-                else:
-                    print(f"  (No hay archivos .docx en {ruta.parent})")
-            else:
-                print(f"  El directorio padre no existe: {ruta.parent}")
-                print("  Pista: si la ruta es de OneDrive, comprueba la ubicación")
-                print("  real desde el Explorador (botón derecho > Copiar ruta) y")
-                print("  asegúrate de que el archivo esté descargado localmente.")
-            print("  Vuelve a introducir la ruta (o Ctrl+C para salir).")
-            continue
-
-        if ruta.is_dir():
-            print(f"  ERROR: la ruta es un directorio, no un archivo .docx.")
-            continue
-
-        if ruta.suffix.lower() != ".docx":
-            print(f"  ERROR: el archivo no tiene extensión .docx ({ruta.suffix}).")
-            continue
-
-        return str(ruta)
+        print(f"  ERROR: {motivo}")
+        if not ruta.exists() and ruta.parent.exists():
+            docxs = sorted(ruta.parent.glob("*.docx"))
+            if docxs:
+                print(f"  Archivos .docx en {ruta.parent}:")
+                for d in docxs[:10]:
+                    print(f"    - {d.name}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -224,8 +279,10 @@ def main():
     from word.bookmarks import rellenar_marcadores
     import docx
     plantilla_path = Path(params["plantilla"])
-    if not plantilla_path.exists():
-        print(f"\nERROR: la plantilla ya no existe en la ruta indicada:\n  {plantilla_path}")
+    ok, motivo = _validar_docx(plantilla_path)
+    if not ok:
+        print(f"\nERROR: no se puede abrir la plantilla:\n  {plantilla_path}")
+        print(f"  Causa: {motivo}")
         sys.exit(1)
     doc = docx.Document(str(plantilla_path))
 
