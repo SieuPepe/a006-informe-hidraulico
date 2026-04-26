@@ -11,7 +11,7 @@ from db.connection import execute_query, execute_scalar, test_connection
 # ═══════════════════════════════════════════════════
 # CONFIGURACIÓN — Cambiar según el municipio
 # ═══════════════════════════════════════════════════
-SECTOR_IDS = [11100, 11101, 11102]  # Artziniega
+SECTOR_IDS = [80, 81, 1121]  # Artziniega
 RESULT_ID = "Delika"
 # ═══════════════════════════════════════════════════
 
@@ -42,7 +42,7 @@ for r in rows:
 # Verificar si hay man_source
 print("\n  --- man_source ---")
 for r in rows:
-    ms = execute_query(f"SELECT * FROM man_source WHERE node_id = {r['node_id']}")
+    ms = execute_query(f"SELECT * FROM man_source WHERE node_id = '{r['node_id']}'")
     if ms:
         print(f"  node_id={r['node_id']}: {dict(ms[0])}")
     else:
