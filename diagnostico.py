@@ -11,8 +11,8 @@ from db.connection import execute_query, execute_scalar, test_connection
 # ═══════════════════════════════════════════════════
 # CONFIGURACIÓN — Cambiar según el municipio
 # ═══════════════════════════════════════════════════
-SECTOR_IDS = [80, 81, 1121]  # Artziniega
-RESULT_ID = "Delika"
+SECTOR_IDS = [80, 81,82,83,84, 1121]  # Artziniega
+RESULT_ID = "Artziniega"
 # ═══════════════════════════════════════════════════
 
 print("Conectando a la BD...")
