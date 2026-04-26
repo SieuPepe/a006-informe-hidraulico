@@ -484,13 +484,19 @@ def get_autonomia_depositos(result_id, sector_ids):
 
     Autonomía (h) = volumen útil (m³) / caudal medio de salida (m³/h).
 
-    El caudal de salida se deriva del consumo anual del sector
-    (inp_connec.demand × DEMAND_MULTIPLIER) repartido entre los tanques
-    del propio sector. De esta forma el cálculo es INDEPENDIENTE de la
-    duración de la simulación EPANET.
+    Caudal de salida = AVG(GREATEST(-rn.demand, 0)) sobre rpt_node.
+    En la convención EPANET, demand<0 en un TANK significa que sale
+    agua hacia la red. Promediar GREATEST(-demand, 0) da el caudal
+    medio que aporta el tank (descartando los timesteps en que se
+    está llenando, donde demand>0).
+
+    Esto refleja la TOPOLOGÍA REAL del modelo (qué zona alimenta cada
+    tank). Si la simulación es muy corta y un tank no llega a
+    descargar, el caudal saldrá 0 y la autonomía aparecerá vacía:
+    en ese caso hay que alargar la simulación EPANET para capturar
+    al menos un ciclo completo de llenado/vaciado del tank.
     """
     ph = ','.join(['%s'] * len(sector_ids))
-    multiplicador = get_demand_multiplier()
     return execute_query(f"""
         WITH dep_nivel AS (
             SELECT n.node_id,
@@ -509,45 +515,30 @@ def get_autonomia_depositos(result_id, sector_ids):
             GROUP BY n.node_id, n.code, n.descript, s.name, n.sector_id,
                      n.elevation, mt.name, mt.vutil, mt.vmax
         ),
-        sector_consumo AS (
-            -- Consumo total del sector en l/s, en alta (con multiplicador).
-            -- inp_connec.demand es la demanda BASE registrada por abonado.
-            -- Independiente de la duración de la simulación EPANET.
-            SELECT c.sector_id,
-                COUNT(*) AS num_tanks_sector,
-                SUM(consumo_sector_ls) AS consumo_total_sector_ls
-            FROM (
-                SELECT n.sector_id,
-                    (SELECT COALESCE(SUM(ic.demand), 0) * %s
-                     FROM connec cn
-                     JOIN inp_connec ic ON ic.connec_id = cn.connec_id
-                     WHERE cn.sector_id = n.sector_id AND cn.state = 1)
-                    AS consumo_sector_ls
-                FROM node n
-                WHERE n.sector_id IN ({ph}) AND n.epa_type = 'TANK' AND n.state = 1
-            ) c
-            GROUP BY c.sector_id, c.consumo_sector_ls
+        dep_caudal AS (
+            -- Caudal de salida medio del tank durante la simulación.
+            -- Convención EPANET: demand<0 → sale agua del tank.
+            SELECT n.node_id,
+                ROUND(AVG(GREATEST(-rn.demand, 0))::numeric, 3) AS caudal_salida_ls
+            FROM rpt_node rn
+            JOIN node n ON n.node_id = rn.node_id
+            WHERE rn.result_id = %s
+              AND n.sector_id IN ({ph})
+              AND n.epa_type = 'TANK'
+            GROUP BY n.node_id
         )
         SELECT dn.deposito, dn.sector, dn.sector_id,
             dn.nivel_medio,
             dn.volumen_ref AS volumen_util_m3,
-            -- Caudal salida estimado por tank = consumo del sector / nº tanks del sector
-            ROUND(
-                COALESCE(sc.consumo_total_sector_ls / NULLIF(sc.num_tanks_sector, 0), 0)::numeric,
-                3
-            ) AS caudal_salida_ls,
-            CASE WHEN COALESCE(sc.consumo_total_sector_ls, 0) > 0
-                       AND COALESCE(sc.num_tanks_sector, 0) > 0
-                THEN ROUND(
-                    (dn.volumen_ref / (sc.consumo_total_sector_ls / sc.num_tanks_sector * 3.6))::numeric,
-                    1
-                )
+            COALESCE(dc.caudal_salida_ls, 0) AS caudal_salida_ls,
+            CASE WHEN COALESCE(dc.caudal_salida_ls, 0) > 0
+                THEN ROUND((dn.volumen_ref / (dc.caudal_salida_ls * 3.6))::numeric, 1)
                 ELSE NULL
             END AS autonomia_h
         FROM dep_nivel dn
-        LEFT JOIN sector_consumo sc ON sc.sector_id = dn.sector_id
+        LEFT JOIN dep_caudal dc ON dc.node_id = dn.node_id
         ORDER BY dn.sector, dn.deposito
-    """, [result_id] + list(sector_ids) + [multiplicador] + list(sector_ids))
+    """, [result_id] + list(sector_ids) + [result_id] + list(sector_ids))
 
 
 # ─────────────────────────────────────────────────────────────
