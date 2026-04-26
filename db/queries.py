@@ -498,14 +498,20 @@ def get_autonomia_depositos(result_id, sector_ids):
             GROUP BY n.node_id, n.code, n.descript, s.name, n.sector_id, n.elevation, mt.name, mt.vutil, mt.vmax
         ),
         dep_caudal AS (
-            SELECT a.node_1 AS node_id,
-                ROUND(AVG(ABS(ra.flow))::numeric, 3) AS caudal_salida_ls
-            FROM rpt_arc ra
-            JOIN v_edit_arc a ON a.arc_id = ra.arc_id
-            JOIN node n ON n.node_id = a.node_1 AND n.epa_type = 'TANK'
-            WHERE ra.result_id = %s
+            -- Caudal de salida medio del depósito = promedio de demand cuando es positivo.
+            -- En EPANET, rn.demand de un TANK refleja el balance neto:
+            --   > 0 → sale agua hacia la red
+            --   < 0 → entra agua (se está llenando)
+            -- Antes se usaba AVG(ABS(flow)) en arcos con node_1 = depósito, pero
+            -- si el arco estaba digitalizado al revés (node_2 = depósito) salía 0.
+            SELECT n.node_id,
+                ROUND(AVG(GREATEST(rn.demand, 0))::numeric, 3) AS caudal_salida_ls
+            FROM rpt_node rn
+            JOIN node n ON n.node_id = rn.node_id
+            WHERE rn.result_id = %s
               AND n.sector_id IN ({ph})
-            GROUP BY a.node_1
+              AND n.epa_type = 'TANK'
+            GROUP BY n.node_id
         )
         SELECT dn.deposito, dn.sector, dn.sector_id,
             dn.nivel_medio,
@@ -579,17 +585,18 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
               AND n.sector_id IN ({ph}) AND n.epa_type = 'JUNCTION'
         """, p_nodos)
 
-        # Caudal inyectado al sistema = demanda real consumida en JUNCTIONS
-        # (ya incluye el DEMAND MULTIPLIER aplicado por EPANET).
-        # Antes se sumaba ABS(demand) de TANK+RESERVOIR, pero un TANK
-        # llenándose tiene demand<0 y el ABS lo contaba como inyección falsa.
+        # Caudal inyectado al sistema = lo que SALE de las fuentes
+        # (TANK + RESERVOIR con demand > 0). El llenado de un TANK tiene
+        # demand < 0 y se descarta con GREATEST(demand, 0). Esto evita
+        # los falsos positivos del antiguo SUM(ABS(demand)) que disparaba
+        # los caudales en instantes de carga de depósitos.
         caudal_inj = execute_query(f"""
-            SELECT ROUND(SUM(rn.demand)::numeric, 2) AS caudal_total_ls
+            SELECT ROUND(SUM(GREATEST(rn.demand, 0))::numeric, 2) AS caudal_total_ls
             FROM rpt_node rn
             JOIN node n ON n.node_id = rn.node_id
             WHERE rn.result_id = %s AND rn.time = %s
               AND n.sector_id IN ({ph})
-              AND n.epa_type = 'JUNCTION'
+              AND n.epa_type IN ('TANK', 'RESERVOIR')
         """, p_nodos)
 
         arcos = execute_query(f"""
