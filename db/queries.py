@@ -338,9 +338,9 @@ def get_datos_sectores(sector_ids):
                 COALESCE(iv.custom_dint, iv.cat_dint) AS diametro_mm,
                 ROUND(COALESCE(iv.pressure, iv.flow)::numeric, 0) AS presion_consigna
             FROM node n
-            LEFT JOIN v_edit_inp_valve iv ON iv.node_id::text = n.node_id::text
+            JOIN v_edit_inp_valve iv ON iv.node_id::text = n.node_id::text
             WHERE n.sector_id = %s AND n.state = 1
-              AND n.epa_type IN ('PRV', 'VALVE')
+              AND iv.valv_type = 'PRV'
             ORDER BY n.code
         """, (sid,))
     return sectores
