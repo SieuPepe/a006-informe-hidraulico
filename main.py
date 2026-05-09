@@ -5,6 +5,7 @@ Proyecto URBITIK — Consorcio de Aguas de Álava (Urbide)
 Uso: python main.py
 """
 import os
+import re
 import sys
 import logging
 from pathlib import Path
@@ -311,9 +312,12 @@ def main():
             _insert_text_at_bookmark(bookmarks[bm_name], texto)
 
     print("  [4/4] Guardando documento...")
-    nombre_salida = (
-        f"A006_{params['municipio_nombre'].upper().replace(' ', '_')}.docx"
-    )
+    # Sanea el nombre del municipio: Windows prohíbe < > : " / \ | ? * en filenames.
+    # Ejemplo: "Ayala / Aiara" -> "AYALA_AIARA"
+    slug = re.sub(r'[<>:"/\\|?*]', '_', params['municipio_nombre'].upper())
+    slug = re.sub(r'\s+', '_', slug).strip('_')
+    slug = re.sub(r'_+', '_', slug)
+    nombre_salida = f"A006_{slug}.docx"
     ruta_salida = Path(OUTPUT_DIR) / nombre_salida
     doc.save(str(ruta_salida))
 
