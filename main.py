@@ -273,57 +273,83 @@ def main():
     print(f"    Depósitos: {datos_muni.get('num_depositos', '?')}")
     print(f"    Sectores con datos: {len(datos_sectores)}")
 
-    # ── FASE 3: Parámetros del documento ──
-    params = solicitar_parametros_documento(params)
-
-    # ── FASE 4: Generación del informe ──
-    print("\n" + "=" * 60)
-    print("  GENERANDO INFORME WORD...")
-    print("=" * 60)
-
+    # Detecta si existe ya un informe previo del municipio. Si existe, ofrece
+    # saltarse las fases 3 y 4 y enviar el Word existente directamente a Claude.
+    # Útil cuando ya generaste y editaste el Word a mano y solo quieres
+    # (re)generar los textos narrativos.
     from word.properties import rellenar_docproperties
     from word.tables import rellenar_tablas
     from word.sectors import replicar_sectores
     from word.bookmarks import rellenar_marcadores
     import docx
-    plantilla_path = Path(params["plantilla"])
-    ok, motivo = _validar_docx(plantilla_path)
-    if not ok:
-        print(f"\nERROR: no se puede abrir la plantilla:\n  {plantilla_path}")
-        print(f"  Causa: {motivo}")
-        sys.exit(1)
-    doc = docx.Document(str(plantilla_path))
 
-    print("\n  [1/4] Rellenando campos DOCPROPERTY...")
-    rellenar_docproperties(doc, params, datos_muni, resultados)
-
-    print("  [2/4] Rellenando tablas...")
-    rellenar_tablas(doc, datos_muni, datos_sectores, resultados)
-
-    print("  [3/4] Replicando bloques de sector...")
-    replicar_sectores(doc, datos_sectores, resultados)
-
-    # Insertar textos manuales del usuario
-    from word.bookmarks import _find_bookmarks, _insert_text_at_bookmark
-    bookmarks = _find_bookmarks(doc)
-    for bm_name in ("descripcion_sectores",):
-        texto = params.get(bm_name, "")
-        if texto and bm_name in bookmarks:
-            _insert_text_at_bookmark(bookmarks[bm_name], texto)
-
-    print("  [4/4] Guardando documento...")
-    # Sanea el nombre del municipio: Windows prohíbe < > : " / \ | ? * en filenames.
-    # Ejemplo: "Ayala / Aiara" -> "AYALA_AIARA"
     slug = re.sub(r'[<>:"/\\|?*]', '_', params['municipio_nombre'].upper())
     slug = re.sub(r'\s+', '_', slug).strip('_')
     slug = re.sub(r'_+', '_', slug)
     nombre_salida = f"A006_{slug}.docx"
     ruta_salida = Path(OUTPUT_DIR) / nombre_salida
-    doc.save(str(ruta_salida))
 
-    print("\n" + "=" * 60)
-    print(f"  ✓ Informe generado: {ruta_salida}")
-    print("=" * 60)
+    reutilizar_existente = False
+    if ruta_salida.exists():
+        print("\n" + "=" * 60)
+        print(f"  Existe un informe previo: {ruta_salida.name}")
+        print("=" * 60)
+        print("  ¿Reutilizar el Word existente y saltar a la fase Claude?")
+        print("    s = sí: conserva el Word actual (con tus ediciones manuales)")
+        print("            y va directamente a generar los textos con Claude.")
+        print("    n = no: regenera el Word desde plantilla (pierde tus ediciones)")
+        print("            y pide plantilla + datos manuales.")
+        respuesta = input("  Selecciona [s/n] (por defecto: s): ").strip().lower()
+        reutilizar_existente = (respuesta != "n")
+
+    if reutilizar_existente:
+        ok, motivo = _validar_docx(ruta_salida)
+        if not ok:
+            print(f"\nERROR: el informe previo no se puede abrir:\n  {ruta_salida}")
+            print(f"  Causa: {motivo}")
+            sys.exit(1)
+        print(f"\n  ✓ Reutilizando informe existente: {ruta_salida}")
+        doc = None  # se abrirá en la fase Claude
+    else:
+        # ── FASE 3: Parámetros del documento ──
+        params = solicitar_parametros_documento(params)
+
+        # ── FASE 4: Generación del informe ──
+        print("\n" + "=" * 60)
+        print("  GENERANDO INFORME WORD...")
+        print("=" * 60)
+
+        plantilla_path = Path(params["plantilla"])
+        ok, motivo = _validar_docx(plantilla_path)
+        if not ok:
+            print(f"\nERROR: no se puede abrir la plantilla:\n  {plantilla_path}")
+            print(f"  Causa: {motivo}")
+            sys.exit(1)
+        doc = docx.Document(str(plantilla_path))
+
+        print("\n  [1/4] Rellenando campos DOCPROPERTY...")
+        rellenar_docproperties(doc, params, datos_muni, resultados)
+
+        print("  [2/4] Rellenando tablas...")
+        rellenar_tablas(doc, datos_muni, datos_sectores, resultados)
+
+        print("  [3/4] Replicando bloques de sector...")
+        replicar_sectores(doc, datos_sectores, resultados)
+
+        # Insertar textos manuales del usuario
+        from word.bookmarks import _find_bookmarks, _insert_text_at_bookmark
+        bookmarks = _find_bookmarks(doc)
+        for bm_name in ("descripcion_sectores",):
+            texto = params.get(bm_name, "")
+            if texto and bm_name in bookmarks:
+                _insert_text_at_bookmark(bookmarks[bm_name], texto)
+
+        print("  [4/4] Guardando documento...")
+        doc.save(str(ruta_salida))
+
+        print("\n" + "=" * 60)
+        print(f"  ✓ Informe generado: {ruta_salida}")
+        print("=" * 60)
 
     # ── FASE 5: Generación de textos con Claude (tras revisión manual) ──
     print("\n  Revisa y edita el documento en Word antes de continuar.")

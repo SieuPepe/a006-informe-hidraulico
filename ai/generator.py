@@ -10,7 +10,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-opus-4-8"
 MAX_TOKENS = 1024
 
 # ---------------------------------------------------------------------------
