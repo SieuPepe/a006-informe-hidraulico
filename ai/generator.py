@@ -119,7 +119,9 @@ def _prompt_sector_presiones(contexto, datos_sectores, resultados, idx):
     sector = datos_sectores[idx] if idx < len(datos_sectores) else {}
     sid = sector.get("sector_id")
     nombre = sector.get("nombre_sector", str(sid))
+    sector_type = (sector.get("sector_type") or "DISTRIBUTION").upper()
     datos_sector = ""
+    tipo_eval = "connec"
     if resultados and resultados.get("por_sector") and sid in resultados["por_sector"]:
         for esc, d in resultados["por_sector"][sid].items():
             datos_sector += (f"  {esc}: presion min={d.get('presion_minima', '?')}, "
@@ -127,9 +129,27 @@ def _prompt_sector_presiones(contexto, datos_sectores, resultados, idx):
                              f"max={d.get('presion_maxima', '?')} mca, "
                              f"nodos baja presion={d.get('nodos_baja_presion', '?')}, "
                              f"nodos alta presion={d.get('nodos_alta_presion', '?')}\n")
+            # El campo tipo_evaluacion_presion es el mismo en los 3 escenarios
+            tipo_eval = d.get("tipo_evaluacion_presion", tipo_eval)
+
+    if sector_type == "SOURCE" or tipo_eval == "junction":
+        nota_eval = (
+            "IMPORTANTE: Este es un sector de tipo SOURCE (red de transporte/captacion "
+            "sin acometidas registradas). Las presiones aqui reflejadas se han evaluado "
+            "sobre los nodos hidraulicos de la red (no sobre puntos de demanda final). "
+            "Por tanto, los valores describen el estado hidraulico del transporte, no la "
+            "calidad del servicio al usuario. Menciona esta consideracion en el analisis."
+        )
+    else:
+        nota_eval = (
+            "Las presiones se han evaluado en los puntos de demanda (acometidas/connecs) "
+            "del sector, reflejando la calidad del servicio al usuario final."
+        )
+
     return (f"Contexto general:\n{contexto}\n\n"
-            f"Sector analizado: {nombre}\n"
+            f"Sector analizado: {nombre} (tipo: {sector_type})\n"
             f"Datos de presion del sector:\n{datos_sector}\n"
+            f"{nota_eval}\n\n"
             f"Redacta un parrafo de analisis de presiones para el sector '{nombre}', "
             f"comentando los valores en hora punta, media y nocturna, "
             f"e identificando si existen problemas de presion baja o excesiva.")
@@ -281,88 +301,187 @@ def _llamar_claude(prompt):
 
 
 # ---------------------------------------------------------------------------
+# Revisión interactiva
+# ---------------------------------------------------------------------------
+
+def _reescribir_con_feedback(prompt_original, feedback):
+    """Reescribe un texto añadiendo una nota del revisor al prompt original."""
+    nuevo_prompt = (
+        f"{prompt_original}\n\n"
+        f"---\n"
+        f"Nota del revisor sobre el texto anterior:\n{feedback}\n"
+        f"Reescribe el parrafo teniendo en cuenta esta nota."
+    )
+    return _llamar_claude(nuevo_prompt)
+
+
+def _print_separador(char="─", width=60):
+    print(char * width)
+
+
+def _revisar_iterativo(texto_inicial, prompt_original, etiqueta):
+    """Muestra un texto, permite iterar con feedback hasta aceptar o saltar.
+
+    Returns: texto final aceptado (puede ser cadena vacía si se salta).
+    """
+    texto = texto_inicial
+    while True:
+        print(f"\n═══════ Revisando: {etiqueta} ═══════")
+        print(texto if texto else "(sin texto)")
+        _print_separador()
+        respuesta = input(
+            "> [Enter]=aceptar · escribe feedback para reescribir · s=saltar: "
+        ).strip()
+        if not respuesta:
+            print(f"✓ Aceptado.")
+            return texto
+        if respuesta.lower() == "s":
+            print(f"⊘ Saltado (bookmark quedará vacío).")
+            return ""
+        print(f"🔄 Reescribiendo {etiqueta.lower()} con tu feedback...")
+        texto = _reescribir_con_feedback(prompt_original, respuesta)
+
+
+def _revisar_sector(idx, datos_sectores, resultados, contexto, num_sectores):
+    """Genera y revisa interactivamente los 3 textos de un sector.
+
+    Returns: dict {nombre_marcador: texto}.
+    """
+    nombre_sector = _nombre_sector(datos_sectores, idx)
+    idx_1 = idx + 1
+    sector_type = (datos_sectores[idx].get("sector_type") or "DISTRIBUTION").upper()
+
+    print()
+    _print_separador("═")
+    print(f"  SECTOR {idx_1}/{num_sectores}: {nombre_sector}  [{sector_type}]")
+    _print_separador("═")
+
+    # Genera los 3 textos del sector (3 llamadas a Claude).
+    print(f"\n  Generando los 3 textos del sector con Claude...")
+    prompt_p = _prompt_sector_presiones(contexto, datos_sectores, resultados, idx)
+    prompt_v = _prompt_sector_velocidades(contexto, datos_sectores, resultados, idx)
+    prompt_d = _prompt_sector_deposito(contexto, datos_sectores, resultados, idx)
+    t_p = _llamar_claude(prompt_p)
+    t_v = _llamar_claude(prompt_v)
+    t_d = _llamar_claude(prompt_d)
+
+    # Vista previa de los 3 juntos.
+    print()
+    _print_separador()
+    print("[1] PRESIONES")
+    _print_separador()
+    print(t_p or "(sin texto)")
+    print()
+    _print_separador()
+    print("[2] VELOCIDADES")
+    _print_separador()
+    print(t_v or "(sin texto)")
+    print()
+    _print_separador()
+    print("[3] DEPÓSITO")
+    _print_separador()
+    print(t_d or "(sin texto)")
+    print()
+    _print_separador()
+    accion = input(
+        "> ¿Aceptar los 3 textos tal cual? [Enter=sí / n=revisar uno a uno]: "
+    ).strip().lower()
+
+    if accion != "n":
+        return {
+            f"sector_{idx_1}_presiones":   t_p,
+            f"sector_{idx_1}_velocidades": t_v,
+            f"sector_{idx_1}_deposito":    t_d,
+        }
+
+    # Revisión iterativa por cada uno.
+    t_p = _revisar_iterativo(t_p, prompt_p, f"sector {idx_1} · presiones")
+    t_v = _revisar_iterativo(t_v, prompt_v, f"sector {idx_1} · velocidades")
+    t_d = _revisar_iterativo(t_d, prompt_d, f"sector {idx_1} · deposito")
+    return {
+        f"sector_{idx_1}_presiones":   t_p,
+        f"sector_{idx_1}_velocidades": t_v,
+        f"sector_{idx_1}_deposito":    t_d,
+    }
+
+
+def _revisar_global(etiqueta, prompt_original):
+    """Genera y revisa interactivamente un texto global. Returns: texto."""
+    print()
+    _print_separador("═")
+    print(f"  GLOBAL: {etiqueta}")
+    _print_separador("═")
+    print(f"\n  Generando con Claude...")
+    texto = _llamar_claude(prompt_original)
+    return _revisar_iterativo(texto, prompt_original, etiqueta)
+
+
+# ---------------------------------------------------------------------------
 # Funcion principal
 # ---------------------------------------------------------------------------
 
 def generar_textos(params, datos_muni, datos_sectores, resultados):
     """Genera todos los textos narrativos del informe mediante Claude API.
 
-    Args:
-        params: Diccionario con parametros del usuario.
-        datos_muni: Diccionario con datos del municipio.
-        datos_sectores: Lista de dicts con datos por sector.
-        resultados: Diccionario con resultados de simulacion (globales,
-            por_sector, depositos_eps, retencion).
+    Flujo interactivo:
+      - Por cada sector: genera los 3 textos (presiones/velocidades/depósito),
+        los muestra agrupados y pregunta si aceptarlos en bloque o revisar
+        uno a uno con feedback iterativo.
+      - Por cada texto global: lo muestra solo y permite aceptarlo o reescribir
+        con feedback iterativo.
 
     Returns:
-        dict: Mapa {nombre_marcador: texto_generado}.
+        dict: Mapa {nombre_marcador: texto_generado}. Los marcadores saltados
+        tienen valor "".
     """
     contexto = _resumen_contexto(params, datos_muni, datos_sectores, resultados)
     textos = {}
 
-    # Descripcion general del sistema (capitulo 2.2)
-    logger.info("Generando descripcion general del sistema...")
-    textos["descripcion_sistema"] = _llamar_claude(
-        _prompt_descripcion_sistema(contexto))
+    print()
+    print("=" * 60)
+    print("  REVISIÓN INTERACTIVA DE TEXTOS GENERADOS POR CLAUDE")
+    print("=" * 60)
+    print("  - Por cada sector verás los 3 textos juntos.")
+    print("  - Pulsa Enter para aceptar tal cual, n para revisar uno a uno.")
+    print("  - En cada texto: Enter=aceptar · feedback=reescribir · s=saltar.")
 
-    # Textos por sector (sector_1_presiones, sector_1_velocidades, sector_1_deposito, ...)
+    # Textos por sector
     num_sectores = len(datos_sectores) if datos_sectores else 0
     for i in range(num_sectores):
-        idx_1 = i + 1  # 1-based
-        nombre_sector = _nombre_sector(datos_sectores, i)
+        textos.update(
+            _revisar_sector(i, datos_sectores, resultados, contexto, num_sectores)
+        )
 
-        logger.info("Generando texto de presiones para sector %s...", nombre_sector)
-        bm = f"sector_{idx_1}_presiones"
-        textos[bm] = _llamar_claude(
-            _prompt_sector_presiones(contexto, datos_sectores, resultados, i))
+    # Bloque globales
+    print()
+    print("=" * 60)
+    print("  TEXTOS GLOBALES DEL INFORME")
+    print("=" * 60)
 
-        logger.info("Generando texto de velocidades para sector %s...", nombre_sector)
-        bm = f"sector_{idx_1}_velocidades"
-        textos[bm] = _llamar_claude(
-            _prompt_sector_velocidades(contexto, datos_sectores, resultados, i))
+    textos["descripcion_sistema"]    = _revisar_global(
+        "descripcion_sistema", _prompt_descripcion_sistema(contexto))
+    textos["diagnostico_presiones"]  = _revisar_global(
+        "diagnostico_presiones", _prompt_diagnostico(contexto, "presiones"))
+    textos["diagnostico_velocidades"] = _revisar_global(
+        "diagnostico_velocidades", _prompt_diagnostico(contexto, "velocidades"))
+    textos["diagnostico_retencion"]  = _revisar_global(
+        "diagnostico_retencion", _prompt_diagnostico(contexto, "retencion"))
+    textos["diagnostico_autonomia"]  = _revisar_global(
+        "diagnostico_autonomia", _prompt_diagnostico(contexto, "autonomia"))
+    textos["diagnostico_global"]     = _revisar_global(
+        "diagnostico_global", _prompt_diagnostico_global(contexto))
+    textos["factores_condicionantes"] = _revisar_global(
+        "factores_condicionantes", _prompt_factores_condicionantes(contexto))
+    textos["puntos_vulnerables"]     = _revisar_global(
+        "puntos_vulnerables", _prompt_puntos_vulnerables(contexto))
+    textos["propuestas_mejora"]      = _revisar_global(
+        "propuestas_mejora", _prompt_propuestas_mejora(contexto))
+    textos["conclusiones"]           = _revisar_global(
+        "conclusiones", _prompt_conclusiones(contexto))
 
-        logger.info("Generando texto de deposito para sector %s...", nombre_sector)
-        bm = f"sector_{idx_1}_deposito"
-        textos[bm] = _llamar_claude(
-            _prompt_sector_deposito(contexto, datos_sectores, resultados, i))
-
-    # Diagnosticos globales
-    logger.info("Generando diagnostico de presiones...")
-    textos["diagnostico_presiones"] = _llamar_claude(
-        _prompt_diagnostico(contexto, "presiones"))
-
-    logger.info("Generando diagnostico de velocidades...")
-    textos["diagnostico_velocidades"] = _llamar_claude(
-        _prompt_diagnostico(contexto, "velocidades"))
-
-    logger.info("Generando diagnostico de retencion...")
-    textos["diagnostico_retencion"] = _llamar_claude(
-        _prompt_diagnostico(contexto, "retencion"))
-
-    logger.info("Generando diagnostico de autonomia...")
-    textos["diagnostico_autonomia"] = _llamar_claude(
-        _prompt_diagnostico(contexto, "autonomia"))
-
-    logger.info("Generando diagnostico global...")
-    textos["diagnostico_global"] = _llamar_claude(
-        _prompt_diagnostico_global(contexto))
-
-    # Capitulos finales
-    logger.info("Generando factores condicionantes...")
-    textos["factores_condicionantes"] = _llamar_claude(
-        _prompt_factores_condicionantes(contexto))
-
-    logger.info("Generando puntos vulnerables...")
-    textos["puntos_vulnerables"] = _llamar_claude(
-        _prompt_puntos_vulnerables(contexto))
-
-    logger.info("Generando propuestas de mejora...")
-    textos["propuestas_mejora"] = _llamar_claude(
-        _prompt_propuestas_mejora(contexto))
-
-    logger.info("Generando conclusiones...")
-    textos["conclusiones"] = _llamar_claude(
-        _prompt_conclusiones(contexto))
-
-    logger.info("Generacion de textos completada: %d marcadores.", len(textos))
+    aceptados = sum(1 for t in textos.values() if t)
+    print()
+    print("=" * 60)
+    print(f"  ✓ Generación completada: {aceptados} de {len(textos)} marcadores aceptados.")
+    print("=" * 60)
     return textos

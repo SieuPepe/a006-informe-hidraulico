@@ -262,6 +262,10 @@ def get_datos_sectores(sector_ids):
         SELECT
             s.sector_id,
             s.name AS nombre_sector,
+            -- 'SOURCE' = sector de transporte/captación (sin acometidas).
+            -- 'DISTRIBUTION' = sector de distribución (con acometidas).
+            -- NULL se trata como DISTRIBUTION (conservador).
+            COALESCE(s.sector_type, 'DISTRIBUTION') AS sector_type,
             COUNT(DISTINCT a.arc_id) AS num_arcos,
             ROUND(SUM(a.gis_length) / 1000.0, 2) AS longitud_km,
             COUNT(DISTINCT CASE WHEN n.epa_type = 'JUNCTION' THEN n.node_id END) AS num_nodos,
@@ -278,7 +282,7 @@ def get_datos_sectores(sector_ids):
         LEFT JOIN node n   ON n.sector_id = s.sector_id AND n.state = 1
         LEFT JOIN connec c ON c.sector_id = s.sector_id AND c.state = 1
         WHERE s.sector_id IN ({ph})
-        GROUP BY s.sector_id, s.name
+        GROUP BY s.sector_id, s.name, s.sector_type
         ORDER BY s.sector_id
     """, sector_ids)
 
@@ -434,36 +438,70 @@ def get_demandas_por_sector(sector_ids):
 # INDICADORES TPI (Alegre & Coelho, 1995 — IWA)
 # ─────────────────────────────────────────────────────────────
 
-def get_tpi_por_sector(result_id, sector_ids):
+_TPI_PRESS_EXPR = """
+    CASE
+        WHEN rn.press < 10 THEN 0.0
+        WHEN rn.press < 20 THEN (rn.press - 10.0) / 10.0
+        WHEN rn.press <= 60 THEN 1.0
+        WHEN rn.press <= 80 THEN (80.0 - rn.press) / 20.0
+        ELSE 0.0
+    END
+"""
+
+
+def get_tpi_por_sector(result_id, sector_ids, sector_types=None):
     """Calcula TPI de presión y velocidad promediando sobre todos los timesteps.
 
     Método TPI: curva de penalización trapecial continua 0-1, promedio aritmético.
     press > 0 excluye nodos de aducción próximos a reservorios.
     ABS(vel) porque EPANET puede devolver negativos según dirección del flujo.
+
+    sector_types: dict {sector_id: 'SOURCE' | 'DISTRIBUTION'}.
+      - DISTRIBUTION: TPI presión evaluado en connec (servicio).
+      - SOURCE: TPI presión evaluado en JUNCTIONS de la red (transporte).
     """
+    sector_types = sector_types or {}
     ph = ','.join(['%s'] * len(sector_ids))
 
-    # TPI presión: evaluado SOLO en connec (puntos de servicio).
-    # JOIN con connec en lugar de node (los connecs no están en `node`).
-    tpi_press = execute_query(f"""
-        SELECT c.sector_id,
-            ROUND(AVG(
-                CASE
-                    WHEN rn.press < 10 THEN 0.0
-                    WHEN rn.press < 20 THEN (rn.press - 10.0) / 10.0
-                    WHEN rn.press <= 60 THEN 1.0
-                    WHEN rn.press <= 80 THEN (80.0 - rn.press) / 20.0
-                    ELSE 0.0
-                END
-            )::numeric, 4) AS tpi_presion
-        FROM rpt_node rn
-        JOIN connec c ON c.connec_id::text = rn.node_id::text
-        WHERE rn.result_id = %s
-          AND c.sector_id IN ({ph})
-          AND c.state = 1
-          AND rn.press > 0
-        GROUP BY c.sector_id
-    """, [result_id] + list(sector_ids))
+    # Separamos los sector_ids por tipo y disparamos una query por tipo.
+    distribution_ids = [
+        sid for sid in sector_ids
+        if (sector_types.get(sid) or 'DISTRIBUTION').upper() != 'SOURCE'
+    ]
+    source_ids = [
+        sid for sid in sector_ids
+        if (sector_types.get(sid) or 'DISTRIBUTION').upper() == 'SOURCE'
+    ]
+
+    tpi_press = []
+    if distribution_ids:
+        ph_d = ','.join(['%s'] * len(distribution_ids))
+        tpi_press.extend(execute_query(f"""
+            SELECT c.sector_id,
+                ROUND(AVG({_TPI_PRESS_EXPR})::numeric, 4) AS tpi_presion
+            FROM rpt_node rn
+            JOIN connec c ON c.connec_id::text = rn.node_id::text
+            WHERE rn.result_id = %s
+              AND c.sector_id IN ({ph_d})
+              AND c.state = 1
+              AND rn.press > 0
+            GROUP BY c.sector_id
+        """, [result_id] + list(distribution_ids)) or [])
+
+    if source_ids:
+        ph_s = ','.join(['%s'] * len(source_ids))
+        tpi_press.extend(execute_query(f"""
+            SELECT n.sector_id,
+                ROUND(AVG({_TPI_PRESS_EXPR})::numeric, 4) AS tpi_presion
+            FROM rpt_node rn
+            JOIN node n ON n.node_id = rn.node_id
+            WHERE rn.result_id = %s
+              AND n.sector_id IN ({ph_s})
+              AND n.epa_type = 'JUNCTION'
+              AND n.state = 1
+              AND rn.press > 0
+            GROUP BY n.sector_id
+        """, [result_id] + list(source_ids)) or [])
 
     # TPI velocidad
     tpi_vel = execute_query(f"""
@@ -572,13 +610,25 @@ def get_resultados_simulacion(result_id, sector_ids):
     """
     timesteps = get_timesteps_escenarios(result_id, sector_ids)
 
+    # sector_type por sector_id: 'SOURCE' (transporte, presiones en nodos)
+    # vs 'DISTRIBUTION' (servicio, presiones en connecs). Las queries por
+    # sector aplican la fuente de presión correcta según el tipo.
+    ph_st = ','.join(['%s'] * len(sector_ids))
+    tipos = execute_query(f"""
+        SELECT sector_id, COALESCE(sector_type, 'DISTRIBUTION') AS sector_type
+        FROM sector WHERE sector_id IN ({ph_st})
+    """, sector_ids)
+    sector_types = {r['sector_id']: r['sector_type'] for r in (tipos or [])}
+
     globales = get_resultados_globales(result_id, sector_ids, timesteps)
-    por_sector = get_resultados_por_sector(result_id, sector_ids, timesteps)
+    por_sector = get_resultados_por_sector(
+        result_id, sector_ids, timesteps, sector_types=sector_types,
+    )
     depositos_eps = get_depositos_eps(result_id, sector_ids)
     indicadores_ret = get_indicadores_retencion(
         result_id, sector_ids, timesteps.get('media')
     )
-    tpi = get_tpi_por_sector(result_id, sector_ids)
+    tpi = get_tpi_por_sector(result_id, sector_ids, sector_types=sector_types)
     autonomia = get_autonomia_depositos(result_id, sector_ids)
 
     return {
@@ -660,32 +710,56 @@ def get_resultados_globales(result_id, sector_ids, timesteps):
     return resultados
 
 
-def get_resultados_por_sector(result_id, sector_ids, timesteps):
-    """Resultados agregados por sector para los tres escenarios."""
+_SQL_PRESSURE_DISTRIBUTION = """
+    SELECT
+        ROUND(MIN(rn.press)::numeric, 2) AS presion_minima,
+        ROUND(AVG(rn.press)::numeric, 2) AS presion_media,
+        ROUND(MAX(rn.press)::numeric, 2) AS presion_maxima,
+        COUNT(CASE WHEN rn.press < 10 THEN 1 END) AS nodos_baja_presion,
+        COUNT(CASE WHEN rn.press > 60 THEN 1 END) AS nodos_alta_presion,
+        COUNT(*) AS total_nodos
+    FROM rpt_node rn
+    JOIN connec c ON c.connec_id::text = rn.node_id::text
+    WHERE rn.result_id = %s AND rn.time = %s
+      AND c.sector_id = %s AND c.state = 1
+"""
+
+_SQL_PRESSURE_SOURCE = """
+    SELECT
+        ROUND(MIN(rn.press)::numeric, 2) AS presion_minima,
+        ROUND(AVG(rn.press)::numeric, 2) AS presion_media,
+        ROUND(MAX(rn.press)::numeric, 2) AS presion_maxima,
+        COUNT(CASE WHEN rn.press < 10 THEN 1 END) AS nodos_baja_presion,
+        COUNT(CASE WHEN rn.press > 60 THEN 1 END) AS nodos_alta_presion,
+        COUNT(*) AS total_nodos
+    FROM rpt_node rn
+    JOIN node n ON n.node_id = rn.node_id
+    WHERE rn.result_id = %s AND rn.time = %s
+      AND n.sector_id = %s AND n.epa_type = 'JUNCTION' AND n.state = 1
+"""
+
+
+def get_resultados_por_sector(result_id, sector_ids, timesteps, sector_types=None):
+    """Resultados agregados por sector para los tres escenarios.
+
+    sector_types: dict {sector_id: 'SOURCE' | 'DISTRIBUTION'}.
+      - DISTRIBUTION: presiones evaluadas SOLO en connec (servicio).
+      - SOURCE: presiones evaluadas en los JUNCTIONS de la red (transporte).
+    Si no se pasa, todos los sectores se tratan como DISTRIBUTION.
+    """
+    sector_types = sector_types or {}
     resultados = {}
     for sector_id in sector_ids:
         resultados[sector_id] = {}
+        tipo = (sector_types.get(sector_id) or 'DISTRIBUTION').upper()
+        sql_press = _SQL_PRESSURE_SOURCE if tipo == 'SOURCE' else _SQL_PRESSURE_DISTRIBUTION
+
         for escenario, time_val in timesteps.items():
             if not time_val:
                 continue
             p = [result_id, time_val, sector_id]
 
-            # Presiones evaluadas SOLO en connec (puntos de demanda real).
-            # JOIN con connec porque los connecs no existen en la tabla `node`
-            # (a pesar de exportarse a EPANET como JUNCTIONS con node_id = connec_id).
-            press = execute_query("""
-                SELECT
-                    ROUND(MIN(rn.press)::numeric, 2) AS presion_minima,
-                    ROUND(AVG(rn.press)::numeric, 2) AS presion_media,
-                    ROUND(MAX(rn.press)::numeric, 2) AS presion_maxima,
-                    COUNT(CASE WHEN rn.press < 10 THEN 1 END) AS nodos_baja_presion,
-                    COUNT(CASE WHEN rn.press > 60 THEN 1 END) AS nodos_alta_presion,
-                    COUNT(*) AS total_nodos
-                FROM rpt_node rn
-                JOIN connec c ON c.connec_id::text = rn.node_id::text
-                WHERE rn.result_id = %s AND rn.time = %s
-                  AND c.sector_id = %s AND c.state = 1
-            """, p)
+            press = execute_query(sql_press, p)
 
             vel = execute_query("""
                 SELECT
@@ -704,6 +778,7 @@ def get_resultados_por_sector(result_id, sector_ids, timesteps):
 
             resultados[sector_id][escenario] = {
                 "time": time_val,
+                "tipo_evaluacion_presion": "junction" if tipo == 'SOURCE' else "connec",
                 **(press[0] if press else {}),
                 **(vel[0] if vel else {}),
             }
