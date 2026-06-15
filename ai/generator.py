@@ -304,27 +304,52 @@ def _llamar_claude(prompt):
 # Revisión interactiva
 # ---------------------------------------------------------------------------
 
-def _reescribir_con_feedback(prompt_original, feedback):
-    """Reescribe un texto añadiendo una nota del revisor al prompt original."""
+def _bloque_directrices(directrices):
+    """Construye el bloque de directrices acumuladas para inyectar al prompt."""
+    if not directrices:
+        return ""
+    items = "\n".join(f"  - {d}" for d in directrices)
+    return (
+        "\n\n---\n"
+        "DIRECTRICES DE ESTILO ACUMULADAS DEL REVISOR\n"
+        "(aplicables a TODOS los textos del informe, no solo a este):\n"
+        f"{items}\n"
+        "Respétalas estrictamente.\n"
+        "---\n"
+    )
+
+
+def _llamar_claude_con_directrices(prompt_base, directrices):
+    """Inyecta las directrices acumuladas al prompt y llama a Claude."""
+    return _llamar_claude(prompt_base + _bloque_directrices(directrices))
+
+
+def _reescribir_con_feedback(prompt_original, feedback, directrices):
+    """Reescribe el texto añadiendo el feedback puntual + las directrices acumuladas."""
     nuevo_prompt = (
         f"{prompt_original}\n\n"
         f"---\n"
         f"Nota del revisor sobre el texto anterior:\n{feedback}\n"
         f"Reescribe el parrafo teniendo en cuenta esta nota."
     )
-    return _llamar_claude(nuevo_prompt)
+    return _llamar_claude_con_directrices(nuevo_prompt, directrices)
 
 
 def _print_separador(char="─", width=60):
     print(char * width)
 
 
-def _revisar_iterativo(texto_inicial, prompt_original, etiqueta):
+def _revisar_iterativo(texto_inicial, prompt_original, etiqueta, directrices):
     """Muestra un texto, permite iterar con feedback hasta aceptar o saltar.
 
-    Returns: texto final aceptado (puede ser cadena vacía si se salta).
+    `directrices` es una lista mutable: cuando el usuario da feedback y
+    acepta la reescritura, ese feedback se AÑADE a la lista para que se
+    aplique también a todos los textos posteriores.
+
+    Returns: texto final aceptado (puede ser "" si se salta).
     """
     texto = texto_inicial
+    feedbacks_de_este_texto = []  # ordenados, último primero al final
     while True:
         print(f"\n═══════ Revisando: {etiqueta} ═══════")
         print(texto if texto else "(sin texto)")
@@ -334,19 +359,28 @@ def _revisar_iterativo(texto_inicial, prompt_original, etiqueta):
         ).strip()
         if not respuesta:
             print(f"✓ Aceptado.")
+            # Las directrices que NO eran genéricas estaban solo en
+            # feedbacks_de_este_texto. Las añadimos al pool global para
+            # que también afecten a los textos siguientes.
+            for fb in feedbacks_de_este_texto:
+                if fb not in directrices:
+                    directrices.append(fb)
+            if feedbacks_de_este_texto:
+                print(
+                    f"  (Directrices acumuladas para textos siguientes: "
+                    f"{len(directrices)})"
+                )
             return texto
         if respuesta.lower() == "s":
             print(f"⊘ Saltado (bookmark quedará vacío).")
             return ""
         print(f"🔄 Reescribiendo {etiqueta.lower()} con tu feedback...")
-        texto = _reescribir_con_feedback(prompt_original, respuesta)
+        feedbacks_de_este_texto.append(respuesta)
+        texto = _reescribir_con_feedback(prompt_original, respuesta, directrices)
 
 
-def _revisar_sector(idx, datos_sectores, resultados, contexto, num_sectores):
-    """Genera y revisa interactivamente los 3 textos de un sector.
-
-    Returns: dict {nombre_marcador: texto}.
-    """
+def _revisar_sector(idx, datos_sectores, resultados, contexto, num_sectores, directrices):
+    """Genera y revisa interactivamente los 3 textos de un sector."""
     nombre_sector = _nombre_sector(datos_sectores, idx)
     idx_1 = idx + 1
     sector_type = (datos_sectores[idx].get("sector_type") or "DISTRIBUTION").upper()
@@ -355,15 +389,18 @@ def _revisar_sector(idx, datos_sectores, resultados, contexto, num_sectores):
     _print_separador("═")
     print(f"  SECTOR {idx_1}/{num_sectores}: {nombre_sector}  [{sector_type}]")
     _print_separador("═")
+    if directrices:
+        print(f"  (Aplicando {len(directrices)} directriz/es acumulada/s del revisor)")
 
-    # Genera los 3 textos del sector (3 llamadas a Claude).
+    # Genera los 3 textos del sector (3 llamadas a Claude), ya con las
+    # directrices acumuladas inyectadas en el prompt.
     print(f"\n  Generando los 3 textos del sector con Claude...")
     prompt_p = _prompt_sector_presiones(contexto, datos_sectores, resultados, idx)
     prompt_v = _prompt_sector_velocidades(contexto, datos_sectores, resultados, idx)
     prompt_d = _prompt_sector_deposito(contexto, datos_sectores, resultados, idx)
-    t_p = _llamar_claude(prompt_p)
-    t_v = _llamar_claude(prompt_v)
-    t_d = _llamar_claude(prompt_d)
+    t_p = _llamar_claude_con_directrices(prompt_p, directrices)
+    t_v = _llamar_claude_con_directrices(prompt_v, directrices)
+    t_d = _llamar_claude_con_directrices(prompt_d, directrices)
 
     # Vista previa de los 3 juntos.
     print()
@@ -395,9 +432,9 @@ def _revisar_sector(idx, datos_sectores, resultados, contexto, num_sectores):
         }
 
     # Revisión iterativa por cada uno.
-    t_p = _revisar_iterativo(t_p, prompt_p, f"sector {idx_1} · presiones")
-    t_v = _revisar_iterativo(t_v, prompt_v, f"sector {idx_1} · velocidades")
-    t_d = _revisar_iterativo(t_d, prompt_d, f"sector {idx_1} · deposito")
+    t_p = _revisar_iterativo(t_p, prompt_p, f"sector {idx_1} · presiones", directrices)
+    t_v = _revisar_iterativo(t_v, prompt_v, f"sector {idx_1} · velocidades", directrices)
+    t_d = _revisar_iterativo(t_d, prompt_d, f"sector {idx_1} · deposito", directrices)
     return {
         f"sector_{idx_1}_presiones":   t_p,
         f"sector_{idx_1}_velocidades": t_v,
@@ -405,15 +442,17 @@ def _revisar_sector(idx, datos_sectores, resultados, contexto, num_sectores):
     }
 
 
-def _revisar_global(etiqueta, prompt_original):
+def _revisar_global(etiqueta, prompt_original, directrices):
     """Genera y revisa interactivamente un texto global. Returns: texto."""
     print()
     _print_separador("═")
     print(f"  GLOBAL: {etiqueta}")
     _print_separador("═")
+    if directrices:
+        print(f"  (Aplicando {len(directrices)} directriz/es acumulada/s del revisor)")
     print(f"\n  Generando con Claude...")
-    texto = _llamar_claude(prompt_original)
-    return _revisar_iterativo(texto, prompt_original, etiqueta)
+    texto = _llamar_claude_con_directrices(prompt_original, directrices)
+    return _revisar_iterativo(texto, prompt_original, etiqueta, directrices)
 
 
 # ---------------------------------------------------------------------------
@@ -423,19 +462,18 @@ def _revisar_global(etiqueta, prompt_original):
 def generar_textos(params, datos_muni, datos_sectores, resultados):
     """Genera todos los textos narrativos del informe mediante Claude API.
 
-    Flujo interactivo:
-      - Por cada sector: genera los 3 textos (presiones/velocidades/depósito),
-        los muestra agrupados y pregunta si aceptarlos en bloque o revisar
-        uno a uno con feedback iterativo.
-      - Por cada texto global: lo muestra solo y permite aceptarlo o reescribir
-        con feedback iterativo.
+    Flujo interactivo con APRENDIZAJE: cada feedback aceptado por el usuario
+    se acumula como directriz de estilo y se inyecta en TODOS los prompts
+    siguientes (otros sectores, conclusiones, etc.). De esta forma el modelo
+    no repite los mismos defectos texto tras texto.
 
     Returns:
-        dict: Mapa {nombre_marcador: texto_generado}. Los marcadores saltados
-        tienen valor "".
+        dict: Mapa {nombre_marcador: texto_generado}. Saltados → "".
     """
     contexto = _resumen_contexto(params, datos_muni, datos_sectores, resultados)
     textos = {}
+    # Lista mutable de directrices acumuladas. Se actualiza en cada revisión.
+    directrices = []
 
     print()
     print("=" * 60)
@@ -444,12 +482,16 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
     print("  - Por cada sector verás los 3 textos juntos.")
     print("  - Pulsa Enter para aceptar tal cual, n para revisar uno a uno.")
     print("  - En cada texto: Enter=aceptar · feedback=reescribir · s=saltar.")
+    print("  - Cada feedback que aceptes se acumula como directriz y se")
+    print("    aplicará a TODOS los textos siguientes (otros sectores +")
+    print("    diagnósticos + conclusiones).")
 
     # Textos por sector
     num_sectores = len(datos_sectores) if datos_sectores else 0
     for i in range(num_sectores):
         textos.update(
-            _revisar_sector(i, datos_sectores, resultados, contexto, num_sectores)
+            _revisar_sector(i, datos_sectores, resultados, contexto,
+                            num_sectores, directrices)
         )
 
     # Bloque globales
@@ -459,29 +501,30 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
     print("=" * 60)
 
     textos["descripcion_sistema"]    = _revisar_global(
-        "descripcion_sistema", _prompt_descripcion_sistema(contexto))
+        "descripcion_sistema", _prompt_descripcion_sistema(contexto), directrices)
     textos["diagnostico_presiones"]  = _revisar_global(
-        "diagnostico_presiones", _prompt_diagnostico(contexto, "presiones"))
+        "diagnostico_presiones", _prompt_diagnostico(contexto, "presiones"), directrices)
     textos["diagnostico_velocidades"] = _revisar_global(
-        "diagnostico_velocidades", _prompt_diagnostico(contexto, "velocidades"))
+        "diagnostico_velocidades", _prompt_diagnostico(contexto, "velocidades"), directrices)
     textos["diagnostico_retencion"]  = _revisar_global(
-        "diagnostico_retencion", _prompt_diagnostico(contexto, "retencion"))
+        "diagnostico_retencion", _prompt_diagnostico(contexto, "retencion"), directrices)
     textos["diagnostico_autonomia"]  = _revisar_global(
-        "diagnostico_autonomia", _prompt_diagnostico(contexto, "autonomia"))
+        "diagnostico_autonomia", _prompt_diagnostico(contexto, "autonomia"), directrices)
     textos["diagnostico_global"]     = _revisar_global(
-        "diagnostico_global", _prompt_diagnostico_global(contexto))
+        "diagnostico_global", _prompt_diagnostico_global(contexto), directrices)
     textos["factores_condicionantes"] = _revisar_global(
-        "factores_condicionantes", _prompt_factores_condicionantes(contexto))
+        "factores_condicionantes", _prompt_factores_condicionantes(contexto), directrices)
     textos["puntos_vulnerables"]     = _revisar_global(
-        "puntos_vulnerables", _prompt_puntos_vulnerables(contexto))
+        "puntos_vulnerables", _prompt_puntos_vulnerables(contexto), directrices)
     textos["propuestas_mejora"]      = _revisar_global(
-        "propuestas_mejora", _prompt_propuestas_mejora(contexto))
+        "propuestas_mejora", _prompt_propuestas_mejora(contexto), directrices)
     textos["conclusiones"]           = _revisar_global(
-        "conclusiones", _prompt_conclusiones(contexto))
+        "conclusiones", _prompt_conclusiones(contexto), directrices)
 
     aceptados = sum(1 for t in textos.values() if t)
     print()
     print("=" * 60)
     print(f"  ✓ Generación completada: {aceptados} de {len(textos)} marcadores aceptados.")
+    print(f"  ✓ Directrices acumuladas del revisor: {len(directrices)}.")
     print("=" * 60)
     return textos
