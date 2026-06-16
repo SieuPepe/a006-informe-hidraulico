@@ -165,8 +165,7 @@ def _prompt_sector_velocidades(contexto, datos_sectores, resultados, idx):
             datos_sector += (f"  {esc}: vel media={d.get('velocidad_media', '?')} m/s, "
                              f"vel max={d.get('velocidad_maxima', '?')} m/s, "
                              f"% baja vel={d.get('pct_baja_vel', '?')}%, "
-                             f"% alta vel={d.get('pct_alta_vel', '?')}%, "
-                             f"perdida unitaria={d.get('perdida_unitaria_media', '?')} m/km\n")
+                             f"% alta vel={d.get('pct_alta_vel', '?')}%\n")
     return (f"Contexto general:\n{contexto}\n\n"
             f"Sector analizado: {nombre}\n"
             f"Datos de velocidad del sector:\n{datos_sector}\n"

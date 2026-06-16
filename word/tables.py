@@ -677,7 +677,6 @@ def _fill_indicadores_velocidad(doc, resultados, datos_sectores):
             _safe_get(media, "velocidad_maxima"),
             _safe_get(media, "pct_baja_vel"),
             _safe_get(media, "pct_alta_vel"),
-            _safe_get(media, "perdida_unitaria_media"),
             tpi_val,
             clasif,
         ])
