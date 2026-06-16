@@ -769,10 +769,19 @@ def get_resultados_por_sector(result_id, sector_ids, timesteps, sector_types=Non
                         / NULLIF(COUNT(*), 0), 1) AS pct_baja_vel,
                     ROUND(100.0 * COUNT(CASE WHEN ABS(ra.vel) > 1.5 THEN 1 END)
                         / NULLIF(COUNT(*), 0), 1) AS pct_alta_vel,
-                    ROUND(AVG(ra.headloss / NULLIF(ra.length / 1000.0, 0))::numeric, 3)
-                        AS perdida_unitaria_media
+                    -- Pérdida unitaria equivalente (m/km), ponderada por longitud:
+                    -- SUM(pérdida) / SUM(longitud_km). Solo TUBERÍAS (PIPE),
+                    -- excluyendo bombas y válvulas (cuya 'headloss' es
+                    -- artificial y distorsiona el promedio si se contara).
+                    ROUND((
+                        SUM(CASE WHEN ar.epa_type = 'PIPE' AND ra.length > 0
+                                 THEN ra.headloss ELSE 0 END)
+                        / NULLIF(SUM(CASE WHEN ar.epa_type = 'PIPE' AND ra.length > 0
+                                          THEN ra.length / 1000.0 ELSE 0 END), 0)
+                    )::numeric, 3) AS perdida_unitaria_media
                 FROM rpt_arc ra
                 JOIN v_edit_arc a ON a.arc_id = ra.arc_id
+                JOIN arc ar ON ar.arc_id = ra.arc_id
                 WHERE ra.result_id = %s AND ra.time = %s AND a.sector_id = %s
             """, p)
 
