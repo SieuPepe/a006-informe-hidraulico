@@ -150,6 +150,7 @@ def get_datos_municipio(muni_id, sector_ids):
         FROM node n
         LEFT JOIN man_tank mt ON mt.node_id = n.node_id
         WHERE n.sector_id IN ({ph}) AND n.state = 1 AND n.epa_type = 'TANK'
+          AND n.nodecat_id = 'DEPOSITO'
     """, sector_ids)
 
     # Bombas (PUMP con pump_type=FLOWPUMP)
@@ -203,6 +204,7 @@ def get_datos_municipio(muni_id, sector_ids):
         FROM node n
         LEFT JOIN man_tank mt ON mt.node_id = n.node_id
         WHERE n.epa_type = 'TANK' AND n.state = 1
+          AND n.nodecat_id = 'DEPOSITO'
     """)
     nombres_nodos = {r['nid']: r['nombre'] for r in (nombres_nodos_raw or [])}
 
@@ -269,7 +271,8 @@ def get_datos_sectores(sector_ids):
             COUNT(DISTINCT a.arc_id) AS num_arcos,
             ROUND(SUM(a.gis_length) / 1000.0, 2) AS longitud_km,
             COUNT(DISTINCT CASE WHEN n.epa_type = 'JUNCTION' THEN n.node_id END) AS num_nodos,
-            COUNT(DISTINCT CASE WHEN n.epa_type = 'TANK'     THEN n.node_id END) AS num_depositos,
+            COUNT(DISTINCT CASE WHEN n.epa_type = 'TANK' AND n.nodecat_id = 'DEPOSITO'
+                                 THEN n.node_id END) AS num_depositos,
             COUNT(DISTINCT CASE WHEN n.epa_type = 'PUMP'     THEN n.node_id END) AS num_bombas,
             COUNT(DISTINCT CASE WHEN n.epa_type IN ('PRV','VALVE') THEN n.node_id END) AS num_vrp,
             COUNT(DISTINCT c.connec_id) AS num_abonados,
@@ -316,6 +319,7 @@ def get_datos_sectores(sector_ids):
             LEFT JOIN man_tank mt ON mt.node_id = n.node_id
             LEFT JOIN inp_tank it ON it.node_id = n.node_id
             WHERE n.sector_id = %s AND n.state = 1 AND n.epa_type = 'TANK'
+              AND n.nodecat_id = 'DEPOSITO'
             ORDER BY n.code
         """, (sid,))
         s['fuentes'] = execute_query("""
@@ -569,6 +573,7 @@ def get_autonomia_depositos(result_id, sector_ids):
             WHERE rn.result_id = %s
               AND n.sector_id IN ({ph})
               AND n.epa_type = 'TANK'
+              AND n.nodecat_id = 'DEPOSITO'
             GROUP BY n.node_id, n.code, n.descript, s.name, n.sector_id,
                      n.elevation, mt.name, mt.vutil, mt.vmax
         ),
@@ -582,6 +587,7 @@ def get_autonomia_depositos(result_id, sector_ids):
             WHERE rn.result_id = %s
               AND n.sector_id IN ({ph})
               AND n.epa_type = 'TANK'
+              AND n.nodecat_id = 'DEPOSITO'
             GROUP BY n.node_id
         )
         SELECT dn.deposito, dn.sector, dn.sector_id,
@@ -801,6 +807,7 @@ def get_depositos_eps(result_id, sector_ids):
         WHERE rn.result_id = %s
           AND n.sector_id IN ({ph})
           AND n.epa_type = 'TANK'
+          AND n.nodecat_id = 'DEPOSITO'
         GROUP BY mt.name, n.descript, n.code, s.name, n.elevation, mt.vutil, mt.vmax
         ORDER BY s.name, n.code
     """, [result_id] + list(sector_ids))
@@ -816,6 +823,7 @@ def get_depositos_eps(result_id, sector_ids):
             LEFT JOIN man_tank mt ON mt.node_id = n.node_id
             WHERE rn.result_id = %s
               AND n.epa_type = 'TANK'
+              AND n.nodecat_id = 'DEPOSITO'
               AND n.sector_id IN ({ph})
               AND COALESCE(mt.name, n.descript, n.code) = %s
             ORDER BY rn.id
