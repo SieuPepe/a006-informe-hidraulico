@@ -11,7 +11,7 @@ import config
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-opus-4-8"
-MAX_TOKENS = 1024
+MAX_TOKENS = 2048
 
 # ---------------------------------------------------------------------------
 # Construccion de contexto
@@ -285,7 +285,12 @@ def _prompt_conclusiones(contexto):
 # ---------------------------------------------------------------------------
 
 def _llamar_claude(prompt):
-    """Envia un prompt a Claude y devuelve el texto generado."""
+    """Envia un prompt a Claude y devuelve el texto generado.
+
+    Si la respuesta se trunca por alcanzar max_tokens, avisa por consola
+    para que el revisor sea consciente y pueda dar feedback (por ej.
+    pedir un texto más corto o aumentar MAX_TOKENS).
+    """
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     try:
         message = client.messages.create(
@@ -294,6 +299,14 @@ def _llamar_claude(prompt):
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
+        if getattr(message, "stop_reason", None) == "max_tokens":
+            logger.warning(
+                "Respuesta truncada por max_tokens=%d. "
+                "El texto puede quedar a media frase. "
+                "Considera dar feedback al modelo para acortar, "
+                "o subir MAX_TOKENS en ai/generator.py.",
+                MAX_TOKENS,
+            )
         return message.content[0].text.strip()
     except Exception:
         logger.exception("Error al llamar a Claude API")
