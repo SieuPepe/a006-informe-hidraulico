@@ -10,6 +10,8 @@ import sys
 import logging
 from pathlib import Path
 
+from console import ask  # input() que descarta type-ahead antes de leer
+
 # Evita el desfase de la consola: fuerza que stdout se vacíe línea a línea.
 # En muchos IDEs y en Windows, stdout tiene búfer por bloques y los prompts
 # (print + input) se quedan "atascados" sin pintarse hasta el siguiente Enter,
@@ -113,7 +115,7 @@ def pedir_ruta_plantilla():
             for i, p in enumerate(plantillas_locales, 1):
                 print(f"    [{i}] {p.name}")
             print("    [m] Introducir ruta manual")
-            opcion = input("  Selecciona una opción: ").strip().lower()
+            opcion = ask("  Selecciona una opción: ").strip().lower()
 
             if opcion == "m":
                 pass  # cae al flujo manual abajo
@@ -133,7 +135,7 @@ def pedir_ruta_plantilla():
             print("  de rutas externas (OneDrive, unidades de red, etc.).")
 
         # Flujo manual
-        raw = input("  Ruta completa de la plantilla (.docx): ").strip()
+        raw = ask("  Ruta completa de la plantilla (.docx): ").strip()
         if not raw:
             print("  ERROR: ruta vacía.")
             continue
@@ -177,7 +179,7 @@ def solicitar_parametros_bd():
 
     # 2. muni_id
     print("\n[2/4] Identificación del municipio")
-    muni_id = input("  Introduce el muni_id: ").strip()
+    muni_id = ask("  Introduce el muni_id: ").strip()
     nombre = get_municipio_nombre(muni_id)
     if not nombre:
         print(f"  ERROR: No se encontró ningún municipio con muni_id={muni_id}")
@@ -186,10 +188,10 @@ def solicitar_parametros_bd():
 
     # 3. Sectores
     print("\n[3/4] Sectores hidráulicos")
-    num_sectores = int(input("  Número de sectores hidráulicos: ").strip())
+    num_sectores = int(ask("  Número de sectores hidráulicos: ").strip())
     sector_ids = []
     for i in range(num_sectores):
-        sid = input(f"    sector_id [{i + 1}/{num_sectores}]: ").strip()
+        sid = ask(f"    sector_id [{i + 1}/{num_sectores}]: ").strip()
         sector_ids.append(int(sid))
     print(f"  Sectores: {sector_ids}")
 
@@ -200,7 +202,7 @@ def solicitar_parametros_bd():
         print("  Simulaciones disponibles en la base de datos:")
         for r in disponibles:
             print(f"    - {r['result_id']}  ({r.get('num_timesteps', '?')} timesteps)")
-    result_id = input("  Introduce el result_id a usar: ").strip()
+    result_id = ask("  Introduce el result_id a usar: ").strip()
 
     return {
         "muni_id": muni_id,
@@ -233,7 +235,7 @@ def solicitar_parametros_documento(params):
     print("  (Introduce los valores o pulsa Enter para dejar vacío)")
     campos_manuales = {}
     for clave, descripcion in CAMPOS_MANUALES:
-        valor = input(f"  {descripcion}: ").strip()
+        valor = ask(f"  {descripcion}: ").strip()
         campos_manuales[clave] = valor
     params["campos_manuales"] = campos_manuales
 
@@ -241,7 +243,7 @@ def solicitar_parametros_documento(params):
     print("\n[3/3] Descripción de la sectorización")
     print("  Escribe un párrafo descriptivo de los sectores hidráulicos del municipio.")
     print("  (Este texto se insertará en el marcador 'descripcion_sectores')")
-    descripcion_sectores = input("  Texto: ").strip()
+    descripcion_sectores = ask("  Texto: ").strip()
     params["descripcion_sectores"] = descripcion_sectores
 
     return params
@@ -311,7 +313,7 @@ def main():
         print("            y va directamente a generar los textos con Claude.")
         print("    n = no: regenera el Word desde plantilla (pierde tus ediciones)")
         print("            y pide plantilla + datos manuales.")
-        respuesta = input("  Selecciona [s/n] (por defecto: s): ").strip().lower()
+        respuesta = ask("  Selecciona [s/n] (por defecto: s): ").strip().lower()
         reutilizar_existente = (respuesta != "n")
 
     if reutilizar_existente:
@@ -366,7 +368,7 @@ def main():
     # ── FASE 5: Generación de textos con Claude (tras revisión manual) ──
     print("\n  Revisa y edita el documento en Word antes de continuar.")
     print(f"  Archivo: {ruta_salida}")
-    generar_ai = input("\n  ¿Enviar a Claude para generar textos narrativos? (s/n): ").strip().lower()
+    generar_ai = ask("\n  ¿Enviar a Claude para generar textos narrativos? (s/n): ").strip().lower()
 
     if generar_ai == "s":
         print("\n" + "=" * 60)

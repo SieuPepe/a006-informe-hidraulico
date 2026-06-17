@@ -7,6 +7,7 @@ en estilo de informe de ingenieria hidraulica en castellano.
 import logging
 import anthropic
 import config
+from console import ask  # input() que descarta type-ahead antes de leer
 
 logger = logging.getLogger(__name__)
 
@@ -366,7 +367,7 @@ def _revisar_iterativo(texto_inicial, prompt_original, etiqueta, directrices):
         print(f"\n═══════ Revisando: {etiqueta} ═══════")
         print(texto if texto else "(sin texto)")
         _print_separador()
-        respuesta = input(
+        respuesta = ask(
             "> [Enter]=aceptar · escribe feedback para reescribir · s=saltar: "
         ).strip()
         if not respuesta:
@@ -432,7 +433,7 @@ def _revisar_sector(idx, datos_sectores, resultados, contexto, num_sectores, dir
     print(t_d or "(sin texto)")
     print()
     _print_separador()
-    accion = input(
+    accion = ask(
         "> ¿Aceptar los 3 textos tal cual? [Enter=sí / n=revisar uno a uno]: "
     ).strip().lower()
 
