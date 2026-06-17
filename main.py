@@ -10,10 +10,22 @@ import sys
 import logging
 from pathlib import Path
 
+# Evita el desfase de la consola: fuerza que stdout se vacíe línea a línea.
+# En muchos IDEs y en Windows, stdout tiene búfer por bloques y los prompts
+# (print + input) se quedan "atascados" sin pintarse hasta el siguiente Enter,
+# de modo que parece que el Enter no hace nada y luego saltan dos pasos de golpe.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except AttributeError:
+    pass  # entornos sin TextIOWrapper.reconfigure
+
 # Mostrar info/warnings de los módulos word/ y ai/ por consola.
+# Enviamos el logging a stdout (no a stderr) para que se intercale EN ORDEN con
+# los print()/input(); si va por stderr (sin búfer) se desincroniza del texto.
 logging.basicConfig(
     level=logging.INFO,
     format="%(levelname)s [%(name)s] %(message)s",
+    stream=sys.stdout,
 )
 
 from db.connection import test_connection
