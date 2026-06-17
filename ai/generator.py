@@ -324,8 +324,9 @@ def _bloque_directrices(directrices):
     items = "\n".join(f"  - {d}" for d in directrices)
     return (
         "\n\n---\n"
-        "DIRECTRICES DE ESTILO ACUMULADAS DEL REVISOR\n"
-        "(aplicables a TODOS los textos del informe, no solo a este):\n"
+        "INSTRUCCIONES Y DIRECTRICES DEL REVISOR\n"
+        "(visión general e indicaciones aplicables a TODOS los textos del "
+        "informe, no solo a este):\n"
         f"{items}\n"
         "Respétalas estrictamente.\n"
         "---\n"
@@ -468,6 +469,38 @@ def _revisar_global(etiqueta, prompt_original, directrices):
     return _revisar_iterativo(texto, prompt_original, etiqueta, directrices)
 
 
+def _pedir_instrucciones_generales(directrices):
+    """Pide al usuario instrucciones generales para TODO el informe.
+
+    Cada línea introducida se añade a `directrices`, de modo que se inyecta en
+    todos los prompts de Claude (sectores, diagnósticos, conclusiones). Así el
+    usuario transmite su visión general y las particularidades del informe
+    ANTES de generar el primer texto.
+    """
+    print()
+    _print_separador("═")
+    print("  INSTRUCCIONES GENERALES PARA TODO EL INFORME")
+    _print_separador("═")
+    print("  Indica tu visión general y las particularidades que Claude debe")
+    print("  tener en cuenta en TODOS los textos: tono, enfoque, terminología,")
+    print("  aspectos a destacar o a evitar, etc.")
+    print("  - Una instrucción por línea.")
+    print("  - Línea vacía (Enter) para terminar.")
+    print("  - Si no quieres añadir ninguna, pulsa Enter directamente.")
+    n_inicial = len(directrices)
+    while True:
+        linea = ask(f"  [{len(directrices) - n_inicial + 1}] > ").strip()
+        if not linea:
+            break
+        directrices.append(linea)
+    añadidas = len(directrices) - n_inicial
+    if añadidas:
+        print(f"  ✓ {añadidas} instrucción/es general/es registrada/s; "
+              f"se aplicarán a todos los textos.")
+    else:
+        print("  (Sin instrucciones generales; continúo.)")
+
+
 # ---------------------------------------------------------------------------
 # Funcion principal
 # ---------------------------------------------------------------------------
@@ -498,6 +531,10 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
     print("  - Cada feedback que aceptes se acumula como directriz y se")
     print("    aplicará a TODOS los textos siguientes (otros sectores +")
     print("    diagnósticos + conclusiones).")
+
+    # Instrucciones generales del usuario, antes de generar nada. Se precargan
+    # como directrices para que se inyecten en todos los prompts.
+    _pedir_instrucciones_generales(directrices)
 
     # Textos por sector
     num_sectores = len(datos_sectores) if datos_sectores else 0
