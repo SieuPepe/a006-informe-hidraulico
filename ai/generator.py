@@ -518,6 +518,25 @@ def _ruta_json_textos(params):
     return os.path.join(out, f"A006_{slug}_textos.json")
 
 
+def _candidatos_json_textos(params):
+    """Rutas donde se busca el JSON de textos al cargar, por orden de prioridad.
+
+    Se mira en OUTPUT_DIR (ubicación canónica donde el programa lo guarda) y
+    también en la carpeta de ejecución (cwd, junto a main.py), por si el usuario
+    dejó el archivo ahí. Se eliminan duplicados si ambas rutas coinciden.
+    """
+    canon = _ruta_json_textos(params)
+    fname = os.path.basename(canon)
+    candidatos = [canon, os.path.join(os.getcwd(), fname)]
+    unicos, vistos = [], set()
+    for c in candidatos:
+        clave = os.path.normcase(os.path.abspath(c))
+        if clave not in vistos:
+            vistos.add(clave)
+            unicos.append(c)
+    return unicos
+
+
 def _guardar_textos(ruta, textos):
     """Vuelca los textos aceptados a JSON. Tolerante a fallos (solo avisa)."""
     try:
@@ -562,15 +581,21 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
 
     # ¿Hay textos ya revisados de una ejecución anterior? Ofrecer reutilizarlos
     # para no repetir toda la revisión (p. ej. si el guardado del Word falló).
-    ruta_json = _ruta_json_textos(params)
-    guardados = _cargar_textos(ruta_json)
+    ruta_json = _ruta_json_textos(params)  # ubicación canónica (para guardar)
+    candidatos = _candidatos_json_textos(params)
+    guardados, ruta_encontrada = None, None
+    for c in candidatos:
+        guardados = _cargar_textos(c)
+        if guardados:
+            ruta_encontrada = c
+            break
     if guardados:
         print()
         print("=" * 60)
         print("  TEXTOS YA REVISADOS DE UNA EJECUCIÓN ANTERIOR")
         print("=" * 60)
         print(f"  Se han encontrado {len(guardados)} textos guardados en:")
-        print(f"    {ruta_json}")
+        print(f"    {os.path.abspath(ruta_encontrada)}")
         resp = ask(
             "  ¿Reutilizarlos y SALTAR la revisión? [Enter=sí / n=revisar de nuevo]: "
         ).strip().lower()
@@ -578,6 +603,13 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
             print(f"  ✓ Reutilizando {len(guardados)} textos guardados; "
                   f"no se repite la revisión.")
             return guardados
+    else:
+        print()
+        print("  ℹ No se encontraron textos guardados de una ejecución anterior.")
+        print("    Para reutilizarlos y SALTAR la revisión, coloca el JSON en una")
+        print("    de estas rutas EXACTAS y vuelve a ejecutar:")
+        for c in candidatos:
+            print(f"      - {os.path.abspath(c)}")
 
     def _persistir():
         """Guarda el progreso aceptado hasta ahora (a prueba de cierres)."""
