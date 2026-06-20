@@ -7,6 +7,7 @@ en estilo de informe de ingenieria hidraulica en castellano.
 import json
 import os
 import re
+import unicodedata
 import logging
 import anthropic
 import config
@@ -537,6 +538,45 @@ def _candidatos_json_textos(params):
     return unicos
 
 
+def _norm_nombre(s):
+    """Normaliza un nombre de archivo para comparar de forma tolerante:
+    minúsculas y sin guiones, espacios, acentos ni otros signos."""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return re.sub(r"[^0-9a-z]", "", s.lower())
+
+
+def _buscar_json_textos(params):
+    """Busca el JSON de textos. Primero por nombre exacto en OUTPUT_DIR y en el
+    cwd; si no aparece, acepta un 'A006_*_textos.json' cuyo nombre coincida
+    ignorando guiones, espacios, acentos y mayúsculas (p. ej. si al descargarlo
+    se perdió un guion). Devuelve la ruta o None."""
+    canon = _ruta_json_textos(params)
+    fname = os.path.basename(canon)
+    objetivo = _norm_nombre(fname)
+    dirs, vistos = [], set()
+    for d in (os.path.dirname(canon) or ".", os.getcwd()):
+        ad = os.path.normcase(os.path.abspath(d))
+        if ad not in vistos:
+            vistos.add(ad)
+            dirs.append(d)
+    # 1) match exacto
+    for d in dirs:
+        p = os.path.join(d, fname)
+        if os.path.isfile(p):
+            return p
+    # 2) match tolerante
+    for d in dirs:
+        try:
+            entradas = os.listdir(d)
+        except OSError:
+            continue
+        for f in entradas:
+            if f.lower().endswith("_textos.json") and _norm_nombre(f) == objetivo:
+                return os.path.join(d, f)
+    return None
+
+
 def _guardar_textos(ruta, textos):
     """Vuelca los textos aceptados a JSON. Tolerante a fallos (solo avisa)."""
     try:
@@ -582,13 +622,8 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
     # ¿Hay textos ya revisados de una ejecución anterior? Ofrecer reutilizarlos
     # para no repetir toda la revisión (p. ej. si el guardado del Word falló).
     ruta_json = _ruta_json_textos(params)  # ubicación canónica (para guardar)
-    candidatos = _candidatos_json_textos(params)
-    guardados, ruta_encontrada = None, None
-    for c in candidatos:
-        guardados = _cargar_textos(c)
-        if guardados:
-            ruta_encontrada = c
-            break
+    ruta_encontrada = _buscar_json_textos(params)
+    guardados = _cargar_textos(ruta_encontrada) if ruta_encontrada else None
     if guardados:
         print()
         print("=" * 60)
@@ -608,7 +643,7 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
         print("  ℹ No se encontraron textos guardados de una ejecución anterior.")
         print("    Para reutilizarlos y SALTAR la revisión, coloca el JSON en una")
         print("    de estas rutas EXACTAS y vuelve a ejecutar:")
-        for c in candidatos:
+        for c in _candidatos_json_textos(params):
             print(f"      - {os.path.abspath(c)}")
 
     def _persistir():
