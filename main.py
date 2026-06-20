@@ -253,6 +253,41 @@ def solicitar_parametros_documento(params):
 # MAIN
 # ─────────────────────────────────────────────────────────────
 
+def _guardar_doc_seguro(doc, ruta):
+    """Guarda el .docx reintentando si está bloqueado (abierto en Word).
+
+    En vez de abortar con PermissionError perdiendo todo el trabajo, avisa al
+    usuario para que cierre el archivo y pulse Enter para reintentar. También
+    permite teclear una ruta/nombre alternativo. Devuelve la ruta final usada.
+    """
+    ruta = Path(ruta)
+    while True:
+        try:
+            doc.save(str(ruta))
+            return ruta
+        except PermissionError:
+            print("\n  ⚠ No se puede guardar: el archivo está abierto o bloqueado.")
+            print(f"    {ruta}")
+            print("    → Ciérralo en Word y pulsa Enter para reintentar.")
+            print("    → O escribe otra ruta/nombre y pulsa Enter para guardar ahí.")
+            alt = ask("  > ").strip().strip('"').strip("'")
+            if alt:
+                p = Path(alt)
+                if p.suffix.lower() != ".docx":
+                    p = p.with_suffix(".docx")
+                ruta = p
+        except OSError as e:
+            print(f"\n  ⚠ Error al guardar ({e}).")
+            print("    → Comprueba la ruta/permisos y pulsa Enter para reintentar,")
+            print("    → o escribe otra ruta/nombre y pulsa Enter.")
+            alt = ask("  > ").strip().strip('"').strip("'")
+            if alt:
+                p = Path(alt)
+                if p.suffix.lower() != ".docx":
+                    p = p.with_suffix(".docx")
+                ruta = p
+
+
 def main():
     # Verificar que existe config.py
     if not Path("config.py").exists():
@@ -359,7 +394,7 @@ def main():
                 _insert_text_at_bookmark(bookmarks[bm_name], texto)
 
         print("  [4/4] Guardando documento...")
-        doc.save(str(ruta_salida))
+        ruta_salida = _guardar_doc_seguro(doc, ruta_salida)
 
         print("\n" + "=" * 60)
         print(f"  ✓ Informe generado: {ruta_salida}")
@@ -381,7 +416,7 @@ def main():
         print("\n  Generando textos narrativos...")
         rellenar_marcadores(doc, params, datos_muni, datos_sectores, resultados)
 
-        doc.save(str(ruta_salida))
+        ruta_salida = _guardar_doc_seguro(doc, ruta_salida)
 
         print("\n" + "=" * 60)
         print(f"  ✓ Textos narrativos añadidos: {ruta_salida}")

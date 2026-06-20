@@ -4,6 +4,9 @@ Generador de textos narrativos para el informe hidraulico mediante Claude API.
 Utiliza el modelo Claude de Anthropic para redactar parrafos tecnicos
 en estilo de informe de ingenieria hidraulica en castellano.
 """
+import json
+import os
+import re
 import logging
 import anthropic
 import config
@@ -502,6 +505,42 @@ def _pedir_instrucciones_generales(directrices):
 
 
 # ---------------------------------------------------------------------------
+# Persistencia de los textos aceptados (para no repetir la revisión)
+# ---------------------------------------------------------------------------
+
+def _ruta_json_textos(params):
+    """Ruta del JSON donde se guardan los textos aceptados de este municipio."""
+    nombre = params.get("municipio_nombre", "informe")
+    slug = re.sub(r'[<>:"/\\|?*]', "_", nombre.upper())
+    slug = re.sub(r"\s+", "_", slug).strip("_")
+    slug = re.sub(r"_+", "_", slug)
+    out = getattr(config, "OUTPUT_DIR", ".")
+    return os.path.join(out, f"A006_{slug}_textos.json")
+
+
+def _guardar_textos(ruta, textos):
+    """Vuelca los textos aceptados a JSON. Tolerante a fallos (solo avisa)."""
+    try:
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(textos, f, ensure_ascii=False, indent=2)
+    except Exception:
+        logger.exception("No se pudieron guardar los textos en %s", ruta)
+
+
+def _cargar_textos(ruta):
+    """Carga textos guardados previamente. Devuelve dict no vacío o None."""
+    try:
+        if os.path.exists(ruta):
+            with open(ruta, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data:
+                return data
+    except Exception:
+        logger.exception("No se pudieron cargar los textos guardados de %s", ruta)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Funcion principal
 # ---------------------------------------------------------------------------
 
@@ -520,6 +559,29 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
     textos = {}
     # Lista mutable de directrices acumuladas. Se actualiza en cada revisión.
     directrices = []
+
+    # ¿Hay textos ya revisados de una ejecución anterior? Ofrecer reutilizarlos
+    # para no repetir toda la revisión (p. ej. si el guardado del Word falló).
+    ruta_json = _ruta_json_textos(params)
+    guardados = _cargar_textos(ruta_json)
+    if guardados:
+        print()
+        print("=" * 60)
+        print("  TEXTOS YA REVISADOS DE UNA EJECUCIÓN ANTERIOR")
+        print("=" * 60)
+        print(f"  Se han encontrado {len(guardados)} textos guardados en:")
+        print(f"    {ruta_json}")
+        resp = ask(
+            "  ¿Reutilizarlos y SALTAR la revisión? [Enter=sí / n=revisar de nuevo]: "
+        ).strip().lower()
+        if resp != "n":
+            print(f"  ✓ Reutilizando {len(guardados)} textos guardados; "
+                  f"no se repite la revisión.")
+            return guardados
+
+    def _persistir():
+        """Guarda el progreso aceptado hasta ahora (a prueba de cierres)."""
+        _guardar_textos(ruta_json, textos)
 
     print()
     print("=" * 60)
@@ -543,6 +605,7 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
             _revisar_sector(i, datos_sectores, resultados, contexto,
                             num_sectores, directrices)
         )
+        _persistir()  # guarda el progreso tras cada sector
 
     # Bloque globales
     print()
@@ -550,31 +613,28 @@ def generar_textos(params, datos_muni, datos_sectores, resultados):
     print("  TEXTOS GLOBALES DEL INFORME")
     print("=" * 60)
 
-    textos["descripcion_sistema"]    = _revisar_global(
-        "descripcion_sistema", _prompt_descripcion_sistema(contexto), directrices)
-    textos["diagnostico_presiones"]  = _revisar_global(
-        "diagnostico_presiones", _prompt_diagnostico(contexto, "presiones"), directrices)
-    textos["diagnostico_velocidades"] = _revisar_global(
-        "diagnostico_velocidades", _prompt_diagnostico(contexto, "velocidades"), directrices)
-    textos["diagnostico_retencion"]  = _revisar_global(
-        "diagnostico_retencion", _prompt_diagnostico(contexto, "retencion"), directrices)
-    textos["diagnostico_autonomia"]  = _revisar_global(
-        "diagnostico_autonomia", _prompt_diagnostico(contexto, "autonomia"), directrices)
-    textos["diagnostico_global"]     = _revisar_global(
-        "diagnostico_global", _prompt_diagnostico_global(contexto), directrices)
-    textos["factores_condicionantes"] = _revisar_global(
-        "factores_condicionantes", _prompt_factores_condicionantes(contexto), directrices)
-    textos["puntos_vulnerables"]     = _revisar_global(
-        "puntos_vulnerables", _prompt_puntos_vulnerables(contexto), directrices)
-    textos["propuestas_mejora"]      = _revisar_global(
-        "propuestas_mejora", _prompt_propuestas_mejora(contexto), directrices)
-    textos["conclusiones"]           = _revisar_global(
-        "conclusiones", _prompt_conclusiones(contexto), directrices)
+    globales = [
+        ("descripcion_sistema",      _prompt_descripcion_sistema(contexto)),
+        ("diagnostico_presiones",    _prompt_diagnostico(contexto, "presiones")),
+        ("diagnostico_velocidades",  _prompt_diagnostico(contexto, "velocidades")),
+        ("diagnostico_retencion",    _prompt_diagnostico(contexto, "retencion")),
+        ("diagnostico_autonomia",    _prompt_diagnostico(contexto, "autonomia")),
+        ("diagnostico_global",       _prompt_diagnostico_global(contexto)),
+        ("factores_condicionantes",  _prompt_factores_condicionantes(contexto)),
+        ("puntos_vulnerables",       _prompt_puntos_vulnerables(contexto)),
+        ("propuestas_mejora",        _prompt_propuestas_mejora(contexto)),
+        ("conclusiones",             _prompt_conclusiones(contexto)),
+    ]
+    for etiqueta, prompt in globales:
+        textos[etiqueta] = _revisar_global(etiqueta, prompt, directrices)
+        _persistir()  # guarda el progreso tras cada texto global
 
+    _persistir()  # guardado final completo
     aceptados = sum(1 for t in textos.values() if t)
     print()
     print("=" * 60)
     print(f"  ✓ Generación completada: {aceptados} de {len(textos)} marcadores aceptados.")
     print(f"  ✓ Directrices acumuladas del revisor: {len(directrices)}.")
+    print(f"  ✓ Textos guardados en: {ruta_json}")
     print("=" * 60)
     return textos
